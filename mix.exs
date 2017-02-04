@@ -19,7 +19,8 @@ defmodule Couchex.Mixfile do
       {:couchbeam, "~> 1.4"},
       {:ex_doc, "~> 0.11", only: :dev},
       {:earmark, ">= 0.0.0"},
-      {:hackney, "~> 1.6.3"}
+      {:hackney, "~> 1.6.3"}, 
+      {:jsx, "~> 2.8.1"}
     ]
   end
 
