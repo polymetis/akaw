@@ -4,6 +4,8 @@ defmodule Akaw do
   Wrapper around the [couchbeam](https://github.com/benoitc/couchbeam/) erlang couchdb client
   """
 
+  alias Akaw.Mapper
+
   @doc """
   Returns a server connection
 
