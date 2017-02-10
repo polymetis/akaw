@@ -1,4 +1,4 @@
-defmodule Mapper do
+defmodule Akaw.Mapper do
 
   def list_to_map([]), do: []
   def list_to_map({:error, err_msg}), do: {:error, err_msg}
