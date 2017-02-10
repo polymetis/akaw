@@ -2,7 +2,7 @@ ExUnit.start()
 
 defmodule TestHelper do
   def server do
-    Couchex.server_connection(server_url, [{:basic_auth, {"test", "test"}}])
+    Akaw.server_connection(server_url, [{:basic_auth, {"test", "test"}}])
   end
 
   def server_url do
@@ -10,13 +10,13 @@ defmodule TestHelper do
   end
 
   def put_txt_attachement(db, doc_id, name) do
-    content_type = Couchex.MIME.type("txt") # => "text/plain"
+    content_type = Akaw.MIME.type("txt") # => "text/plain"
     attachment = %{ name: name, data: "SOME DATA - HERE IT'S TEXT", content_type: content_type }
-    Couchex.put_attachment(db, %{id: doc_id}, attachment)
+    Akaw.put_attachment(db, %{id: doc_id}, attachment)
   end
 
   def insert_doc(db, doc) do
-    {:ok, resp_doc} = Couchex.save_doc(db, doc)
+    {:ok, resp_doc} = Akaw.save_doc(db, doc)
     resp_doc
   end
 end

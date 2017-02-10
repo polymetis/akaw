@@ -1,4 +1,4 @@
-defmodule Couchex do
+defmodule Akaw do
 
   @moduledoc """
   Wrapper around the [couchbeam](https://github.com/benoitc/couchbeam/) erlang couchdb client
@@ -9,10 +9,10 @@ defmodule Couchex do
 
   ## Examples
 
-      Couchex.server_connection("url")
+      Akaw.server_connection("url")
       #=> {:server, "url", []}
 
-      Couchex.server_connection(@couchdb_url, [{:basic_auth, {"username", "password"}}])
+      Akaw.server_connection(@couchdb_url, [{:basic_auth, {"username", "password"}}])
       #=> {:server, "url", [{:basic_auth, {"username", "password"}}]}
   """
   def server_connection, do: server_connection("http://localhost:5984")
@@ -24,7 +24,7 @@ defmodule Couchex do
   Returns basic info about server
 
   ## Examples
-      Couchex.server_info(server)
+      Akaw.server_info(server)
       #=> %{"couchdb" => "Welcome", "uuid" => "c1cdba4b7d7a963b9ca7c5445684679f", "vendor" => {[{"version", "1.5.0-1"}, {"name", "Homebrew"}]}, "version" => "1.5.0"}
   """
   def server_info(server) do
@@ -41,16 +41,16 @@ defmodule Couchex do
 
   `continuous` param, replication runs continuously until server restart
 
-      Couchex.replicate(server, %{source: "sourcedb", target: "targetdb", create_target: true})
+      Akaw.replicate(server, %{source: "sourcedb", target: "targetdb", create_target: true})
       #=> {:ok, %{"history" => [...], "ok" => true, "replication_id_version" => 3, "session_id" => "b3457b342b2eb31ea0f85e77bac03a66", "source_last_seq" => 16}}
 
-      Couchex.replicate(server, %{source: "https://user:pass@sourcedb", target: "targetdb", create_target: true})
+      Akaw.replicate(server, %{source: "https://user:pass@sourcedb", target: "targetdb", create_target: true})
       #=> {:ok, resp}
 
-      Couchex.replicate(server, %{source: "https://user:pass@sourcedb", target: "http://user:pass@targetdb", create_target: true})
+      Akaw.replicate(server, %{source: "https://user:pass@sourcedb", target: "http://user:pass@targetdb", create_target: true})
       #=> {:ok, resp}
 
-      Couchex.replicate(server, %{source: "https://user:pass@sourcedb", target: "http://user:pass@targetdb", create_target: true, continuous: true})
+      Akaw.replicate(server, %{source: "https://user:pass@sourcedb", target: "http://user:pass@targetdb", create_target: true, continuous: true})
       #=> #=> {:ok, %{"Cache-Control" => "must-revalidate", "Content-Length" => "84", "Content-Type" => "application/json", "Date" => "Mon, 09 Feb 2015 16:24:19 GMT", "Server" => "CouchDB/1.5.0 (Erlang OTP/R16B03)"}}
 
   """
@@ -64,7 +64,7 @@ defmodule Couchex do
 
   ## Examples
 
-      Couchex.all_dbs(server)
+      Akaw.all_dbs(server)
       #=> {:ok, ["_replicator", "_users", "some_db", ...]}
   """
   def all_dbs(server) do
@@ -75,7 +75,7 @@ defmodule Couchex do
   Returns a single server generated uuid
 
   ## Examples
-      Couchex.uuid(server)
+      Akaw.uuid(server)
       #=> "267732468d85b6fd22504aeaa4dc68e3"
   """
   def uuid(server) do
@@ -87,7 +87,7 @@ defmodule Couchex do
   Returns a total of `number` server generated uuids
 
   ## Examples
-      Couchex.uuids(server, 3)
+      Akaw.uuids(server, 3)
       #=> ["267732468d85b6fd22504aeaa4fb8ac9", "267732468d85b6fd22504aeaa4fb8065", "267732468d85b6fd22504aeaa4fb7ca7"]
   """
   def uuids(server, number) do
@@ -101,11 +101,11 @@ defmodule Couchex do
   They will however be overwritten by the credentials applied to open_db
 
   ## Examples
-      Couchex.open_db(server, "couchex")
-      #=> {:ok, {:db, server, "couchex", []}}
+      Akaw.open_db(server, "akaw")
+      #=> {:ok, {:db, server, "akaw", []}}
 
-      Couchex.open_db(server, "couchex", [{:basic_auth, {"username", "password"}}])
-      #=> {:ok, {:db, server, "couchex", [{:basic_auth, {"username", "password"}}]}}
+      Akaw.open_db(server, "akaw", [{:basic_auth, {"username", "password"}}])
+      #=> {:ok, {:db, server, "akaw", [{:basic_auth, {"username", "password"}}]}}
   """
   def open_db(server, db_name, options \\ []) do
     :couchbeam.open_db(server, db_name, options)
@@ -115,9 +115,9 @@ defmodule Couchex do
   Creates a database. The database must NOT exist
 
   ## Examples
-      Couchex.create_db(server, "couchex")
-      #=> {:db, server, "couchex", [basic_auth: {"username", "password"}]}}
-      Couchex.create_db(server, "couchex")
+      Akaw.create_db(server, "akaw")
+      #=> {:db, server, "akaw", [basic_auth: {"username", "password"}]}}
+      Akaw.create_db(server, "akaw")
       #=> {:error, :db_exists}
   """
   def create_db(server, db_name, options \\ []) do
@@ -128,11 +128,11 @@ defmodule Couchex do
   Deletes a database. The database must exist
 
   ## Examples
-      {:ok, db} = Couchex.open_db(server, "couchex")
-      #=> {:ok, {:db, server, "couchex", []}}
-      Couchex.delete_db(db)
+      {:ok, db} = Akaw.open_db(server, "akaw")
+      #=> {:ok, {:db, server, "akaw", []}}
+      Akaw.delete_db(db)
       #=> {:ok, :db_deleted}
-      Couchex.delete_db(db)
+      Akaw.delete_db(db)
       #=> {:error, :not_found}
   """
   def delete_db(db) do
@@ -146,9 +146,9 @@ defmodule Couchex do
   Deletes a database. The database must exist
 
   ## Examples
-      Couchex.delete_db(server, "couchex")
+      Akaw.delete_db(server, "akaw")
       #=> {:ok, :db_deleted}
-      Couchex.delete_db(server, "couchex")
+      Akaw.delete_db(server, "akaw")
       #=> {:error, :not_found}
   """
   def delete_db(server, db_name) do
@@ -162,10 +162,10 @@ defmodule Couchex do
   Returns database info.
 
   ## Examples
-      {:ok, db} = Couchex.open_db(server, "couchex")
-      Couchex.db_info(db)
+      {:ok, db} = Akaw.open_db(server, "akaw")
+      Akaw.db_info(db)
       #=> %{"committed_update_seq" => 0, "compact_running" => false, "data_size" => 227,
-          "db_name" => "couchex", "disk_format_version" => 6, "disk_size" => 306,
+          "db_name" => "akaw", "disk_format_version" => 6, "disk_size" => 306,
           "doc_count" => 1, "doc_del_count" => 0,
           "instance_start_time" => "1423503379138489", "purge_seq" => 0,
           "update_seq" => 1}
@@ -178,8 +178,8 @@ defmodule Couchex do
   Compacts a database.
 
   ## Examples
-      {:ok, db} = Couchex.open_db(server, "couchex")
-      Couchex.compact(db)
+      {:ok, db} = Akaw.open_db(server, "akaw")
+      Akaw.compact(db)
       #=> :ok
   """
   def compact(db) do
@@ -190,7 +190,7 @@ defmodule Couchex do
   Checks if database exist.
 
   ## Examples
-      Couchex.db_exists?(server, "couchex")
+      Akaw.db_exists?(server, "akaw")
       #=> true
   """
   def db_exists?(server, db_name) do
@@ -203,10 +203,10 @@ defmodule Couchex do
   Update a document, by using an existing document id
 
   ## Examples
-      Couchex.save_doc(db, %{"key" => "value"}) # Couch auto creates id
+      Akaw.save_doc(db, %{"key" => "value"}) # Couch auto creates id
       #=> %{"_id" => "c1cdba4b7d7a963b9ca7c5445684679f", "_rev" => "1-59414e77c768bc202142ac82c2f129de", "key" => "value"}
 
-      Couchex.save_doc(db, %{"_id" => "FIRST_ID", "key" => "value"}) # User defined id
+      Akaw.save_doc(db, %{"_id" => "FIRST_ID", "key" => "value"}) # User defined id
       #=> %{"_id" => "FIRST_ID", "_rev" => "1-59414e77c768bc202142ac82c2f129de", "key" => "value"}
   """
   def save_doc(db, doc) do
@@ -219,10 +219,10 @@ defmodule Couchex do
 
   ## Examples
 
-      Couchex.doc_exists?(db, "EXISTING_DOC_ID")
+      Akaw.doc_exists?(db, "EXISTING_DOC_ID")
       #=> true
 
-      Couchex.doc_exists?(db, "NONE_EXISTING_DOC_ID")
+      Akaw.doc_exists?(db, "NONE_EXISTING_DOC_ID")
       #=> false
 
   """
@@ -235,14 +235,14 @@ defmodule Couchex do
 
   ## Examples
       attachment = %{ name: "image.png", data: "....", content_type: "image/png" }
-      Couchex.put_attachment(db, %{id: id}, attachment) # latest revision
+      Akaw.put_attachment(db, %{id: id}, attachment) # latest revision
       #=> {:ok, %{"id" => "18c359e463c37525e0ff484dcc0003b7", "rev" => "3-ebe18f0e4f4c3c717a9e9291bc2465b3"}}
 
       doc_id = "18c359e463c37525e0ff484dcc0003b7"
       revision = "1-59414e77c768bc202142ac82c2f129de"
-      content_type = Couchex.MIME.type("txt") # => "text/plain"
+      content_type = Akaw.MIME.type("txt") # => "text/plain"
       attachment = %{ name: "file.txt", data: "SOME DATA - HERE IT'S TEXT", content_type: content_type }
-      Couchex.put_attachment(db, %{id: doc_id, rev: revision}, attachment)
+      Akaw.put_attachment(db, %{id: doc_id, rev: revision}, attachment)
       #=> {:ok, %{"id" => "18c359e463c37525e0ff484dcc0003b7", "rev" => "3-ebe18f0e4f4c3c717a9e9291bc2465b3"}}
   """
   def put_attachment(db, %{id: id, rev: rev}, attachment) do
@@ -263,7 +263,7 @@ defmodule Couchex do
   ## Examples
       doc_id = "18c359e463c37525e0ff484dcc0003b7"
       attachment_name = "file.txt"
-      Couchex.fetch_attachment(db, doc_id, attachment_name)
+      Akaw.fetch_attachment(db, doc_id, attachment_name)
       #=> {:ok, "SOME DATA - HERE IT'S TEXT"}
 
   """
@@ -279,10 +279,10 @@ defmodule Couchex do
   ## Examples
       attachment_name = "file.txt"
 
-      Couchex.delete_attachment(db, %{id: "18c359e463c37525e0ff484dcc0003b7"}, attachment_name)
+      Akaw.delete_attachment(db, %{id: "18c359e463c37525e0ff484dcc0003b7"}, attachment_name)
       #=> {:ok, %{"id" => "18c359e463c37525e0ff484dcc0003b7", "rev" => "4-ebe18f0e4f4c3c717a9e9291bc2465b3"}}
 
-      Couchex.delete_attachment(db, %{id: "18c359e463c37525e0ff484dcc0003b7", rev: "3-ebe18f0e4f4c3c717a9e9291bc2465b3"}, attachment_name)
+      Akaw.delete_attachment(db, %{id: "18c359e463c37525e0ff484dcc0003b7", rev: "3-ebe18f0e4f4c3c717a9e9291bc2465b3"}, attachment_name)
       #=> {:ok, %{"id" => "18c359e463c37525e0ff484dcc0003b7", "rev" => "4-ebe18f0e4f4c3c717a9e9291bc2465b3"}}
   """
   def delete_attachment(db, %{id: id, rev: rev}, attachment_name) do
@@ -298,10 +298,10 @@ defmodule Couchex do
   Retreives document as map, by id with or without revision
 
   ## Examples
-      Couchex.open_doc(db, %{id: id})
+      Akaw.open_doc(db, %{id: id})
       #=> {:ok, %{"_id" => id, "_rev" => rev, ...}}
 
-      Couchex.open_doc(db, %{id: id, rev: revision})
+      Akaw.open_doc(db, %{id: id, rev: revision})
       #=> {:ok, %{"_id" => id, "_rev" => rev, ...}}
   """
   def open_doc(db, %{id: id}) do
@@ -318,7 +318,7 @@ defmodule Couchex do
   Returns current document revision
 
   ## Examples
-      Couchex.lookup_doc_rev(db, "18c359e463c37525e0ff484dcc0003b7")
+      Akaw.lookup_doc_rev(db, "18c359e463c37525e0ff484dcc0003b7")
       #=> {:ok, "1-59414e77c768bc202142ac82c2f129de"}
   """
   def lookup_doc_rev(db, id) do
@@ -329,7 +329,7 @@ defmodule Couchex do
   Delete a document
 
   ## Examples
-      Couchex.delete_doc(db, %{id: "18c359e463c37525e0ff484dcc0003b7", rev: "1-59414e77c768bc202142ac82c2f129de"})
+      Akaw.delete_doc(db, %{id: "18c359e463c37525e0ff484dcc0003b7", rev: "1-59414e77c768bc202142ac82c2f129de"})
       #=> %{"id" => "18c359e463c37525e0ff484dcc0003b7", "ok" => true, "rev" => "2-9b2e3bcc3752a3a952a3570b2ed4d27e"}
   """
   def delete_doc(db, %{id: id, rev: rev}) do
@@ -343,7 +343,7 @@ defmodule Couchex do
 
   ## Examples
 
-      Couchex.all(db)
+      Akaw.all(db)
       #=> [
             %{
               "doc" => %{"_id" => "doc_id_1", "_rev" => "...", "foo" => "bar"},
@@ -380,7 +380,7 @@ defmodule Couchex do
         end
       end
 
-      Couchex.follow(db, [:continuous, :heartbeat])
+      Akaw.follow(db, [:continuous, :heartbeat])
       #=> {:ok, <stream_ref>}
       changes_fun(<stream_ref>)
 
@@ -399,7 +399,7 @@ defmodule Couchex do
   options group
 
   ## Examples
-  {:ok, res} = Couchex.fetch_view(db, {"lists","company_users_by_income"},[:group])
+  {:ok, res} = Akaw.fetch_view(db, {"lists","company_users_by_income"},[:group])
   """
   def fetch_view(db, {design_name, view_name}, options \\ []) do
     :couchbeam_view.fetch(db, {design_name, view_name}, options)

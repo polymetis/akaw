@@ -1,8 +1,8 @@
-defmodule Couchex.Mixfile do
+defmodule Akaw.Mixfile do
   use Mix.Project
 
   def project do
-    [app: :couchex,
+    [app: :akaw,
      version: "0.7.0",
      elixir: "~> 1.3",
      package: package,
@@ -35,7 +35,7 @@ defmodule Couchex.Mixfile do
       files: ~w(lib mix.exs README.md LICENSE CHANGELOG.md),
       maintainers: ["Thomas Ringling"],
       licenses: ["Unlicense"],
-      links: %{"GitHub" => "https://github.com/ringling/couchex"}
+      links: %{"GitHub" => "https://github.com/ringling/akaw"}
    ]
   end
 end

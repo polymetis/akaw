@@ -1,4 +1,4 @@
-defmodule Couchex.MIME do
+defmodule Akaw.MIME do
   @moduledoc """
   Maps MIME types to file extensions and vice versa.
   """
@@ -24,10 +24,10 @@ defmodule Couchex.MIME do
 
   ## Examples
 
-      iex> Couchex.MIME.valid?("text/plain")
+      iex> Akaw.MIME.valid?("text/plain")
       true
 
-      iex> Couchex.MIME.valid?("foo/bar")
+      iex> Akaw.MIME.valid?("foo/bar")
       false
 
   """
@@ -42,13 +42,13 @@ defmodule Couchex.MIME do
 
   ## Examples
 
-      iex> Couchex.MIME.extensions("text/html")
+      iex> Akaw.MIME.extensions("text/html")
       ["html", "htm"]
 
-      iex> Couchex.MIME.extensions("application/json")
+      iex> Akaw.MIME.extensions("application/json")
       ["json"]
 
-      iex> Couchex.MIME.extensions("foo/bar")
+      iex> Akaw.MIME.extensions("foo/bar")
       []
 
   """
@@ -64,10 +64,10 @@ defmodule Couchex.MIME do
 
   ## Examples
 
-      iex> Couchex.MIME.type("txt")
+      iex> Akaw.MIME.type("txt")
       "text/plain"
 
-      iex> Couchex.MIME.type("foobarbaz")
+      iex> Akaw.MIME.type("foobarbaz")
       #{inspect @default_type}
 
   """
@@ -86,7 +86,7 @@ defmodule Couchex.MIME do
 
   ## Examples
 
-      iex> Couchex.MIME.path("index.html")
+      iex> Akaw.MIME.path("index.html")
       "text/html"
 
   """

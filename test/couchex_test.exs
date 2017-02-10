@@ -1,4 +1,4 @@
-defmodule CouchexTest do
+defmodule AkawTest do
   use ExUnit.Case, async: true
 
 end
