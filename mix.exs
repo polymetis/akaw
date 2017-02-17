@@ -16,7 +16,7 @@ defmodule Akaw.Mixfile do
 
   defp deps() do
     [
-      {:couchbeam, "~> 1.4"},
+      {:couchbeam, "~> 1.4", github: "vtsatskin/couchbeam", branch: "add_back_mix"},
       {:ex_doc, "~> 0.11", only: :dev},
       {:earmark, ">= 0.0.0"},
       {:hackney, "~> 1.6.3"}, 
