@@ -5,9 +5,9 @@ defmodule Akaw.Mixfile do
     [app: :akaw,
      version: "0.7.0",
      elixir: "~> 1.3",
-     package: package,
-     description: description,
-     deps: deps]
+     package: package(),
+     description: description(),
+     deps: deps()]
   end
 
   def application() do
