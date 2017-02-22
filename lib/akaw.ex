@@ -407,10 +407,17 @@ defmodule Akaw do
     :couchbeam_view.fetch(db, {design_name, view_name}, options)
   end
 
-  defp map_response({:ok, [{list}]}) when is_list(list), do: {:ok, Enum.into(list, %{})}
-  defp map_response({:ok, _status_code, resp, _ref}), do: {:ok, Enum.into(resp, %{})}
-  defp map_response({:ok, {response}}), do: {:ok, response |> Enum.into(%{})}
-  defp map_response({:error, response}), do: {:error, response}
-  defp map_response(response), do: {:ok, response}
+  def fetch_view_values(db, {design_name, view_name}, options \\ []) do
+    {:ok, result } = :couchbeam_view.fetch(db, {design_name, view_name}, options)
+    result |> Enum.map(&Akaw.map_response(&1))
+  end
+
+  def map_response({:ok, [{list}]}) when is_list(list), do: {:ok, Enum.into(list, %{})}
+  def map_response({[{"id", id}, {"key", key}, {"value", {json}}]}), do: {[{"id", id}, {"key", key}, {"value", Akaw.Mapper.list_to_map(json)}]}
+  def map_response({[{"id", id}, {"key", key}, {"value", :null}]}), do: {[{"id", id}, {"key", key}, {"value", :null}]}
+  def map_response({:ok, _status_code, resp, _ref}), do: {:ok, Enum.into(resp, %{})}
+  def map_response({:ok, {response}}), do: {:ok, response |> Enum.into(%{})}
+  def map_response({:error, response}), do: {:error, response}
+  def map_response(response), do: {:ok, response}
 
 end
