@@ -13,8 +13,8 @@ defmodule Akaw.Mapper do
   end
 
   defp tuple_to_map({list}, _map) when is_list(list),do: list_to_map(list)
-  defp tuple_to_map({k,v}, map) when is_tuple(v),   do: map |> Map.put(k, tuple_to_map(v, %{}))
-  defp tuple_to_map({k,v}, map),                    do: map |> Map.put(k, parse_value(v))
+  defp tuple_to_map({k,v}, map) when is_tuple(v),   do: map |> Map.put(String.to_atom(k), tuple_to_map(v, %{}))
+  defp tuple_to_map({k,v}, map),                    do: map |> Map.put(String.to_atom(k), parse_value(v))
 
   defp parse_value(v) when is_list(v),  do: v |> Enum.map(fn(val)-> parse_value(val) end)
   defp parse_value(v) when is_tuple(v), do: tuple_to_map(v, %{})
