@@ -30,7 +30,7 @@ defmodule Akaw.Mapper do
   def map_to_list([]),                      do: []
 
   def reduce(map) do
-    map |> Enum.reduce([], fn({k,v}, acc) -> [{k, map_to_list(v)}] ++ acc end)
+    map |> Enum.reduce([], fn({k,v}, acc) -> [{Atom.to_string(k), map_to_list(v)}] ++ acc end)
   end
 
 end
