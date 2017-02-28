@@ -420,7 +420,7 @@ defmodule Akaw do
   def map_response({[{"id", id}, {"key", key}, {"value", {json}}]}), do: {[{"id", id}, {"key", key}, {"value", Akaw.Mapper.list_to_map(json)}]}
   def map_response({[{"id", id}, {"key", key}, {"value", {json}}, {"doc", {document}}]}), do: {[{"id", id}, {"key", key}, {"value", Akaw.Mapper.list_to_map(json)}, {"doc", Akaw.Mapper.list_to_map(document)}]}
   def map_response({[{"id", id}, {"key", key}, {"value", :null}]}), do: {[{"id", id}, {"key", key}, {"value", :null}]}
-  def map_response({[{"id", id}, {"key", key}, {"value", :null}, {"doc", {document}}]}), do: {[{"id", id}, {"key", key}, {"value", Akaw.Mapper.list_to_map(json)}, {"doc", Akaw.Mapper.list_to_map(document)}]}
+  def map_response({[{"id", id}, {"key", key}, {"value", :null}, {"doc", {document}}]}), do: {[{"id", id}, {"key", key}, {"value", :null}, {"doc", Akaw.Mapper.list_to_map(document)}]}
 
   def map_response({:ok, [{list}]}) when is_list(list), do: {:ok, Enum.into(list, %{})}
   def map_response({:ok, _status_code, resp, _ref}), do: {:ok, Enum.into(resp, %{})}
