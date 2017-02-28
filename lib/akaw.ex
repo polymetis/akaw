@@ -423,7 +423,7 @@ defmodule Akaw do
 
   def map_response({:ok, [{list}]}) when is_list(list), do: {:ok, Enum.into(list, %{})}
   def map_response({:ok, _status_code, resp, _ref}), do: {:ok, Enum.into(resp, %{})}
-  def map_response({:ok, {response}}), do: {:ok, response |> Enum.into(%{})}
+  def map_response({:ok, {response}}), do: {:ok, response |> Akaw.Mapper.list_to_map()}
   def map_response({:error, response}), do: {:error, response}
   def map_response(response), do: {:ok, response}
 
