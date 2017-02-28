@@ -334,7 +334,7 @@ defmodule Akaw do
       Akaw.delete_doc(db, %{id: "18c359e463c37525e0ff484dcc0003b7", rev: "1-59414e77c768bc202142ac82c2f129de"})
       #=> %{"id" => "18c359e463c37525e0ff484dcc0003b7", "ok" => true, "rev" => "2-9b2e3bcc3752a3a952a3570b2ed4d27e"}
   """
-  def delete_doc(db, %{id: id, rev: rev}) do
+  def delete_doc(db, %{_id: id, _rev: rev}) do
     doc = {[{"_id", id}, {"_rev", rev}]}
     :couchbeam.delete_doc(db, doc, [])
     |> map_response
