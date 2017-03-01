@@ -306,10 +306,10 @@ defmodule Akaw do
       Akaw.open_doc(db, %{id: id, rev: revision})
       #=> {:ok, %{"_id" => id, "_rev" => rev, ...}}
   """
-  def open_doc(db, %{id: id}) do
+  def open_doc(db, %{_id: id}) do
     :couchbeam.open_doc(db, id) |> map_open_resp
   end
-  def open_doc(db, %{id: id, rev: rev}) do
+  def open_doc(db, %{_id: id, _rev: rev}) do
     :couchbeam.open_doc(db, id, [{:rev, rev}]) |> map_open_resp
   end
 
