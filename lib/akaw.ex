@@ -340,6 +340,12 @@ defmodule Akaw do
     |> map_response
   end
 
+  def delete_doc!(db, %{_id: id, _rev: rev}) do
+    doc = {[{"_id", id}, {"_rev", rev}]}
+    :couchbeam.delete_doc(db, doc, [{:empty_on_delete,  true}])
+    |> map_response
+  end
+
   @doc """
   Returns all documents in a database
 
