@@ -18,6 +18,7 @@ defmodule Akaw.Mapper do
 
   defp parse_value(v) when is_list(v),  do: v |> Enum.map(fn(val)-> parse_value(val) end)
   defp parse_value(v) when is_tuple(v), do: tuple_to_map(v, %{})
+  defp parse_value(nil),                do: :null
   defp parse_value(v),                  do: v
 
   def map_to_list({k,v}),                   do: [{k, v}]
