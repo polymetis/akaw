@@ -29,6 +29,7 @@ defmodule Akaw.Mapper do
   def map_to_list(v) when is_binary(v),     do: v
   def map_to_list(v) when is_number(v),     do: v
   def map_to_list(v) when is_boolean(v),    do: v
+  def map_to_list(v) when is_nil(v),        do: :null
   def map_to_list([]),                      do: []
 
   def reduce(map) do
