@@ -216,6 +216,19 @@ defmodule Akaw do
     |> map_response
   end
 
+  def save_docs(db, docs) do
+    converted_docs = bulk_convert_docs(docs, [])
+    :couchbeam.save_docs(db, converted_docs)
+  end
+
+  def bulk_convert_docs([doc | rest], acc) do
+    bulk_convert_docs(rest, [{Mapper.map_to_list(doc)} | acc])
+  end
+
+  def bulk_convert_docs([], acc) do
+    acc
+  end
+
   @doc """
   Returns true if document exists
 
