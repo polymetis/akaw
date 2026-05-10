@@ -61,12 +61,14 @@ defmodule Akaw.Session do
   Returns the authenticated user (if any), their roles, and the auth handler
   CouchDB used to identify them.
 
-      iex> Akaw.Session.info(authed_client)
-      {:ok, %{
-        "ok" => true,
-        "userCtx" => %{"name" => "admin", "roles" => ["_admin"]},
-        "info" => %{"authentication_handlers" => ["cookie", "default"], ...}
-      }}
+  ## Example
+
+      Akaw.Session.info(authed_client)
+      #=> {:ok, %{
+      #     "ok" => true,
+      #     "userCtx" => %{"name" => "admin", "roles" => ["_admin"]},
+      #     "info" => %{"authentication_handlers" => ["cookie", "default"], ...}
+      #   }}
   """
   @spec info(Client.t()) :: {:ok, map()} | {:error, term()}
   def info(%Client{} = client), do: Request.request(client, :get, "/_session")

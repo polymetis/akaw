@@ -1,6 +1,9 @@
 defmodule AkawTest do
   use ExUnit.Case, async: true
+
   doctest Akaw
+  doctest Akaw.Error
+  doctest Akaw.Params
 
   describe "new/1" do
     test "builds a client with sensible defaults" do

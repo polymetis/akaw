@@ -6,8 +6,10 @@ defmodule Akaw.PropertiesTest do
 
   describe "Akaw.LineStream.lines/1" do
     property "reconstructs the original lines regardless of chunk boundaries" do
-      check all original_lines <- list_of(line_gen(), min_length: 1, max_length: 30),
-                chunk_sizes <- list_of(positive_integer(), max_length: 20) do
+      check all(
+              original_lines <- list_of(line_gen(), min_length: 1, max_length: 30),
+              chunk_sizes <- list_of(positive_integer(), max_length: 20)
+            ) do
         full = Enum.join(original_lines, "\n") <> "\n"
         chunks = chunk_binary(full, chunk_sizes)
 
@@ -16,15 +18,17 @@ defmodule Akaw.PropertiesTest do
     end
 
     property "never emits empty lines (heartbeats are filtered)" do
-      check all chunks <- list_of(string(:alphanumeric, max_length: 20), max_length: 30) do
+      check all(chunks <- list_of(string(:alphanumeric, max_length: 20), max_length: 30)) do
         result = LineStream.lines(chunks) |> Enum.to_list()
         refute "" in result
       end
     end
 
     property "every emitted line is a non-empty binary with no embedded newline" do
-      check all original_lines <- list_of(line_gen(), max_length: 20),
-                chunk_sizes <- list_of(positive_integer(), max_length: 10) do
+      check all(
+              original_lines <- list_of(line_gen(), max_length: 20),
+              chunk_sizes <- list_of(positive_integer(), max_length: 10)
+            ) do
         full = Enum.join(original_lines, "\n") <> if original_lines == [], do: "", else: "\n"
         chunks = chunk_binary(full, chunk_sizes)
 
@@ -37,9 +41,11 @@ defmodule Akaw.PropertiesTest do
     end
 
     property "rechunking the same bytes gives the same output" do
-      check all original_lines <- list_of(line_gen(), min_length: 1, max_length: 20),
-                sizes_a <- list_of(positive_integer(), max_length: 10),
-                sizes_b <- list_of(positive_integer(), max_length: 10) do
+      check all(
+              original_lines <- list_of(line_gen(), min_length: 1, max_length: 20),
+              sizes_a <- list_of(positive_integer(), max_length: 10),
+              sizes_b <- list_of(positive_integer(), max_length: 10)
+            ) do
         full = Enum.join(original_lines, "\n") <> "\n"
         a = full |> chunk_binary(sizes_a) |> LineStream.lines() |> Enum.to_list()
         b = full |> chunk_binary(sizes_b) |> LineStream.lines() |> Enum.to_list()
@@ -50,8 +56,10 @@ defmodule Akaw.PropertiesTest do
 
   describe "Akaw.Params.encode_json_keys/1" do
     property "JSON-typed values produce valid JSON that roundtrips" do
-      check all key <- member_of([:startkey, :endkey, :key, :start_key, :end_key]),
-                value <- json_value_gen() do
+      check all(
+              key <- member_of([:startkey, :endkey, :key, :start_key, :end_key]),
+              value <- json_value_gen()
+            ) do
         result = Params.encode_json_keys([{key, value}])
         assert [{^key, encoded}] = result
         assert is_binary(encoded)
@@ -60,19 +68,23 @@ defmodule Akaw.PropertiesTest do
     end
 
     property "non-JSON-typed entries pass through unchanged" do
-      check all entries <-
-                  list_of(
-                    {member_of([:limit, :skip, :descending, :include_docs]),
-                     one_of([integer(), boolean(), string(:alphanumeric)])},
-                    max_length: 6
-                  ) do
+      check all(
+              entries <-
+                list_of(
+                  {member_of([:limit, :skip, :descending, :include_docs]),
+                   one_of([integer(), boolean(), string(:alphanumeric)])},
+                  max_length: 6
+                )
+            ) do
         assert Params.encode_json_keys(entries) == entries
       end
     end
 
     property "mixed input — JSON keys get encoded, others unchanged" do
-      check all json_v <- json_value_gen(),
-                limit <- positive_integer() do
+      check all(
+              json_v <- json_value_gen(),
+              limit <- positive_integer()
+            ) do
         input = [startkey: json_v, limit: limit]
         result = Params.encode_json_keys(input)
 
@@ -85,14 +97,14 @@ defmodule Akaw.PropertiesTest do
 
   describe "URL doc-id encoding" do
     property "URI.encode + URI.decode roundtrip preserves arbitrary UTF-8" do
-      check all id <- string(:utf8, min_length: 1, max_length: 60) do
+      check all(id <- string(:utf8, min_length: 1, max_length: 60)) do
         encoded = URI.encode(id, &URI.char_unreserved?/1)
         assert URI.decode(encoded) == id
       end
     end
 
     property "encoded path is ASCII-only (no unreserved characters escape)" do
-      check all id <- string(:utf8, min_length: 1, max_length: 60) do
+      check all(id <- string(:utf8, min_length: 1, max_length: 60)) do
         encoded = URI.encode(id, &URI.char_unreserved?/1)
         # Result must be valid 7-bit ASCII; percent-encoding handles everything else
         assert String.printable?(encoded)
@@ -103,8 +115,10 @@ defmodule Akaw.PropertiesTest do
 
   describe "basic auth header" do
     property "Authorization: Basic roundtrips through Base.decode64 to 'user:pass'" do
-      check all user <- string(:alphanumeric, min_length: 1, max_length: 20),
-                pass <- string(:printable, max_length: 30) do
+      check all(
+              user <- string(:alphanumeric, min_length: 1, max_length: 20),
+              pass <- string(:printable, max_length: 30)
+            ) do
         test = self()
 
         plug = fn conn ->

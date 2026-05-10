@@ -9,6 +9,20 @@ defmodule Akaw.Params do
   @doc """
   Walks a keyword list of query params and JSON-encodes any value whose key
   is in the JSON-typed param set. Other entries pass through untouched.
+
+  ## Examples
+
+      iex> Akaw.Params.encode_json_keys(startkey: "user_", limit: 10)
+      [startkey: ~s|"user_"|, limit: 10]
+
+      iex> Akaw.Params.encode_json_keys(key: ["a", 1])
+      [key: ~s|["a",1]|]
+
+      iex> Akaw.Params.encode_json_keys(endkey: nil)
+      [endkey: "null"]
+
+      iex> Akaw.Params.encode_json_keys(include_docs: true, descending: false)
+      [include_docs: true, descending: false]
   """
   @spec encode_json_keys(keyword()) :: keyword()
   def encode_json_keys(opts) when is_list(opts) do

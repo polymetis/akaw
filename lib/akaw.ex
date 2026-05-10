@@ -101,6 +101,21 @@ defmodule Akaw do
       iex> client = Akaw.new(base_url: "http://localhost:5984")
       iex> client.base_url
       "http://localhost:5984"
+
+      iex> Akaw.new(base_url: "http://x:5984/").base_url
+      "http://x:5984"
+
+      iex> client = Akaw.new(base_url: "http://x", auth: {:basic, "admin", "pw"})
+      iex> client.auth
+      {:basic, "admin", "pw"}
+
+      iex> client = Akaw.new(base_url: "http://x", finch: MyApp.Finch)
+      iex> client.finch
+      MyApp.Finch
+
+      iex> client = Akaw.new(base_url: "http://x", headers: [{"x-trace", "abc"}])
+      iex> client.headers
+      [{"x-trace", "abc"}]
   """
   @spec new(keyword()) :: Client.t()
   def new(opts) when is_list(opts) do
