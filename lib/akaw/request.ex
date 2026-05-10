@@ -3,7 +3,10 @@ defmodule Akaw.Request do
 
   alias Akaw.{Client, Error}
 
-  @type method :: :get | :post | :put | :delete | :head | :patch | :options | :copy
+  # Standard HTTP method atoms accepted by Finch, plus a binary escape hatch
+  # for non-standard verbs like "COPY" (CouchDB document copy).
+  @type method ::
+          :get | :post | :put | :delete | :head | :patch | :options | String.t()
   @type return_kind :: :body | :response
 
   @doc """

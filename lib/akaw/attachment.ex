@@ -34,9 +34,10 @@ defmodule Akaw.Attachment do
   `GET /{db}/{docid}/{attname}` — fetch an attachment.
 
   Returns `{:ok, body, meta}` where `body` is the attachment bytes and
-  `meta` is a map with `:content_type` and `:etag` (the parent doc's
-  current rev, in quotes — strip with `String.trim(etag, "\\\"")` if you
-  need just the rev).
+  `meta` is a map with `:content_type` and `:etag`. The ETag is CouchDB's
+  base64-encoded MD5 of the attachment content (in quotes per HTTP spec) —
+  useful for client-side caching, **not** the parent document's revision.
+  Read the parent doc separately if you need its rev.
 
   ## Options
 

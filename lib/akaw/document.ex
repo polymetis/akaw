@@ -104,7 +104,7 @@ defmodule Akaw.Document do
         rev -> "#{destination}?rev=#{rev}"
       end
 
-    Request.request(client, :copy, path(db, src_id),
+    Request.request(client, "COPY", path(db, src_id),
       headers: [{"destination", destination_value}],
       params: opts
     )

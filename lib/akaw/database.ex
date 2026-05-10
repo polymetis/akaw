@@ -76,7 +76,7 @@ defmodule Akaw.Database do
   """
   @spec compact(Client.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def compact(%Client{} = client, db) when is_binary(db) do
-    Request.request(client, :post, "/" <> encode(db) <> "/_compact")
+    Request.request(client, :post, "/" <> encode(db) <> "/_compact", json: %{})
   end
 
   @doc """
@@ -87,7 +87,7 @@ defmodule Akaw.Database do
           {:ok, map()} | {:error, term()}
   def compact_views(%Client{} = client, db, ddoc)
       when is_binary(db) and is_binary(ddoc) do
-    Request.request(client, :post, "/#{encode(db)}/_compact/#{encode(ddoc)}")
+    Request.request(client, :post, "/#{encode(db)}/_compact/#{encode(ddoc)}", json: %{})
   end
 
   @doc """
@@ -95,7 +95,7 @@ defmodule Akaw.Database do
   """
   @spec view_cleanup(Client.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def view_cleanup(%Client{} = client, db) when is_binary(db) do
-    Request.request(client, :post, "/" <> encode(db) <> "/_view_cleanup")
+    Request.request(client, :post, "/" <> encode(db) <> "/_view_cleanup", json: %{})
   end
 
   @doc """
@@ -106,7 +106,7 @@ defmodule Akaw.Database do
   """
   @spec ensure_full_commit(Client.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def ensure_full_commit(%Client{} = client, db) when is_binary(db) do
-    Request.request(client, :post, "/" <> encode(db) <> "/_ensure_full_commit")
+    Request.request(client, :post, "/" <> encode(db) <> "/_ensure_full_commit", json: %{})
   end
 
   @doc """
