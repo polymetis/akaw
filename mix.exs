@@ -24,7 +24,8 @@ defmodule Akaw.MixProject do
   defp deps do
     [
       {:req, "~> 0.5"},
-      {:plug, "~> 1.0", only: :test}
+      {:plug, "~> 1.0", only: :test},
+      {:stream_data, "~> 1.0", only: :test}
     ]
   end
 end
