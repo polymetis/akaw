@@ -127,4 +127,33 @@ defmodule Akaw.Server do
   @spec membership(Client.t()) :: {:ok, map()} | {:error, term()}
   def membership(%Client{} = client),
     do: Request.request(client, :get, "/_membership")
+
+  @doc """
+  `POST /_search_analyze` — run a Lucene analyzer over a piece of text
+  without indexing. Useful for debugging full-text search ddocs.
+
+  ## Example
+
+      Akaw.Server.search_analyze(client, %{
+        analyzer: "standard",
+        text: "running shoes"
+      })
+
+  Available on clusters built with the Clouseau (Java) full-text search
+  plugin.
+  """
+  @spec search_analyze(Client.t(), map()) :: {:ok, map()} | {:error, term()}
+  def search_analyze(%Client{} = client, body) when is_map(body) do
+    Request.request(client, :post, "/_search_analyze", json: body)
+  end
+
+  @doc """
+  `POST /_nouveau_analyze` — analyzer test endpoint for the newer Nouveau
+  search backend. Same shape as `search_analyze/2` but goes through
+  Nouveau instead of Clouseau.
+  """
+  @spec nouveau_analyze(Client.t(), map()) :: {:ok, map()} | {:error, term()}
+  def nouveau_analyze(%Client{} = client, body) when is_map(body) do
+    Request.request(client, :post, "/_nouveau_analyze", json: body)
+  end
 end

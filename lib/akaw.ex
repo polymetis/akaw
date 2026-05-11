@@ -38,6 +38,10 @@ defmodule Akaw do
   | `Akaw.LocalDoc`    | `/{db}/_local/{docid}`, `/{db}/_local_docs`                                                             |
   | `Akaw.Security`    | `/{db}/_security`                                                                                       |
   | `Akaw.Purge`       | `/{db}/_purge`, `/_purged_infos`, `/_purged_infos_limit`                                                |
+  | `Akaw.Node`        | `/_node/{node}/_stats`, `/_system`, `/_prometheus`, `/_smoosh/status`, `/_versions`, `/_restart`        |
+  | `Akaw.Config`      | `/_node/{node}/_config[/section[/key]]`, `/_reload`                                                     |
+  | `Akaw.Cluster`     | `/_cluster_setup`                                                                                       |
+  | `Akaw.Reshard`     | `/_reshard`, `/_reshard/state`, `/_reshard/jobs[/{jobid}[/state]]`                                      |
 
   ## Connection pooling
 
