@@ -25,13 +25,27 @@ defmodule Akaw.Find do
         limit: 25
       })
 
-  > #### Streaming {: .warning}
-  >
-  > Large result sets buffer fully in memory. Streaming will land in phase 2.
+  For large result sets use `stream_find/3` to avoid buffering the full
+  response.
   """
   @spec find(Client.t(), String.t(), map()) :: {:ok, map()} | {:error, term()}
   def find(%Client{} = client, db, query) when is_binary(db) and is_map(query) do
     Request.request(client, :post, "/#{encode(db)}/_find", json: query)
+  end
+
+  @doc """
+  Streaming counterpart to `find/3` — emits one decoded document per element.
+
+  Useful when a Mango selector matches more documents than fit comfortably
+  in memory. Note that `bookmark`, `warning`, and `execution_stats` (which
+  appear after the `docs` array in the non-streaming response) are not
+  surfaced by this stream — call `find/3` directly if you need them.
+  """
+  @spec stream_find(Client.t(), String.t(), map()) :: Enumerable.t()
+  def stream_find(%Client{} = client, db, query)
+      when is_binary(db) and is_map(query) do
+    Akaw.Streaming.chunks(client, :post, "/#{encode(db)}/_find", json: query)
+    |> Akaw.JsonItemStream.items()
   end
 
   @doc """

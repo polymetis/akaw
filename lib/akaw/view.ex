@@ -14,17 +14,13 @@ defmodule Akaw.View do
       queries into one round-trip.
 
   As with `Akaw.Documents.all_docs/3`, JSON-typed query params (`startkey`,
-  `endkey`, `key`) are auto-encoded.
-
-  > #### Streaming {: .warning}
-  >
-  > Large views buffer fully in memory in this version. Streaming via
-  > incremental JSON parsing lands in phase 2.
+  `endkey`, `key`) are auto-encoded. For large views use `stream/5` to
+  avoid buffering the full response.
 
   See <https://docs.couchdb.org/en/latest/api/ddoc/views.html>.
   """
 
-  alias Akaw.{Client, Params, Request}
+  alias Akaw.{Client, JsonItemStream, Params, Request, Streaming}
 
   @doc """
   `GET /{db}/_design/{ddoc}/_view/{view}` — query a view.
@@ -79,6 +75,40 @@ defmodule Akaw.View do
     Request.request(client, :post, view_path(db, ddoc, view) <> "/queries",
       json: %{queries: queries}
     )
+  end
+
+  @doc """
+  Streaming counterpart to `get/5` — emits one decoded row map per element.
+
+  Each element looks like:
+
+      %{"id" => "...", "key" => ..., "value" => ...,
+        "doc" => %{...}}    # if include_docs: true
+
+  Memory-bounded: parses one row at a time, safe for arbitrarily large views.
+  """
+  @spec stream(Client.t(), String.t(), String.t(), String.t(), keyword()) :: Enumerable.t()
+  def stream(%Client{} = client, db, ddoc, view, opts \\ [])
+      when is_binary(db) and is_binary(ddoc) and is_binary(view) do
+    Streaming.chunks(client, :get, view_path(db, ddoc, view),
+      params: Params.encode_json_keys(opts)
+    )
+    |> JsonItemStream.items()
+  end
+
+  @doc """
+  Streaming counterpart to `post_keys/6` — POSTs the keys list and emits
+  decoded row maps.
+  """
+  @spec stream_post_keys(Client.t(), String.t(), String.t(), String.t(), [term()], keyword()) ::
+          Enumerable.t()
+  def stream_post_keys(%Client{} = client, db, ddoc, view, keys, opts \\ [])
+      when is_binary(db) and is_binary(ddoc) and is_binary(view) and is_list(keys) do
+    Streaming.chunks(client, :post, view_path(db, ddoc, view),
+      json: %{keys: keys},
+      params: Params.encode_json_keys(opts)
+    )
+    |> JsonItemStream.items()
   end
 
   defp view_path(db, ddoc, view) do

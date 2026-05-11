@@ -32,7 +32,7 @@ defmodule Akaw.Changes do
   See <https://docs.couchdb.org/en/latest/api/database/changes.html>.
   """
 
-  alias Akaw.{Client, Error, LineStream, Request}
+  alias Akaw.{Client, LineStream, Request, Streaming}
 
   @doc """
   `GET /{db}/_changes` — fetch changes.
@@ -115,7 +115,7 @@ defmodule Akaw.Changes do
   """
   @spec stream(Client.t(), String.t(), keyword()) :: Enumerable.t()
   def stream(%Client{} = client, db, opts \\ []) when is_binary(db) do
-    raw_chunks(client, :get, "/#{encode(db)}/_changes", params: continuous_params(opts))
+    Streaming.chunks(client, :get, "/#{encode(db)}/_changes", params: continuous_params(opts))
     |> LineStream.lines()
     |> Stream.map(&JSON.decode!/1)
   end
@@ -127,7 +127,7 @@ defmodule Akaw.Changes do
   @spec stream_post(Client.t(), String.t(), map(), keyword()) :: Enumerable.t()
   def stream_post(%Client{} = client, db, body, opts \\ [])
       when is_binary(db) and is_map(body) do
-    raw_chunks(client, :post, "/#{encode(db)}/_changes",
+    Streaming.chunks(client, :post, "/#{encode(db)}/_changes",
       params: continuous_params(opts),
       json: body
     )
@@ -136,115 +136,6 @@ defmodule Akaw.Changes do
   end
 
   defp continuous_params(opts), do: Keyword.put(opts, :feed, "continuous")
-
-  # Returns a Stream of raw binary chunks from the response body.
-  # The HTTP request is opened lazily when the stream is enumerated; errors
-  # raise from inside the resource start function.
-  defp raw_chunks(client, method, path, opts) do
-    Stream.resource(
-      fn -> open(client, method, path, opts) end,
-      &next_chunk/1,
-      &close/1
-    )
-  end
-
-  defp open(client, method, path, opts) do
-    opts = Keyword.put(opts, :into, :self)
-
-    case Request.request_raw(client, method, path, opts) do
-      {:ok, %Req.Response{status: status} = resp} when status in 200..299 ->
-        %{response: resp, finished: false}
-
-      {:ok, %Req.Response{status: status} = resp} ->
-        raise build_open_error(resp, status)
-
-      {:error, exception} ->
-        raise exception
-    end
-  end
-
-  defp next_chunk(%{finished: true} = state), do: {:halt, state}
-
-  defp next_chunk(state) do
-    receive do
-      message ->
-        case Req.parse_message(state.response, message) do
-          {:ok, parts} ->
-            {chunks, finished?} = collect_chunks(parts)
-            {chunks, %{state | finished: finished?}}
-
-          {:error, reason} ->
-            raise "Akaw.Changes stream error: #{inspect(reason)}"
-
-          :unknown ->
-            next_chunk(state)
-        end
-    end
-  end
-
-  defp collect_chunks(parts) do
-    Enum.reduce(parts, {[], false}, fn
-      {:data, chunk}, {acc, fin} -> {acc ++ [chunk], fin}
-      :done, {acc, _} -> {acc, true}
-      _, acc -> acc
-    end)
-  end
-
-  defp close(%{response: response}) do
-    _ = Req.cancel_async_response(response)
-    :ok
-  end
-
-  defp build_open_error(%Req.Response{body: body} = resp, status) do
-    decoded = drain_async_body(resp, body)
-
-    %Error{
-      status: status,
-      error: get_in(decoded, ["error"]),
-      reason: get_in(decoded, ["reason"]),
-      body: decoded
-    }
-  end
-
-  defp drain_async_body(resp, %Req.Response.Async{} = _async) do
-    chunks = drain(resp, [])
-    _ = Req.cancel_async_response(resp)
-
-    case IO.iodata_to_binary(chunks) do
-      "" -> %{}
-      bin -> safe_decode(bin)
-    end
-  end
-
-  defp drain_async_body(_resp, body) when is_map(body), do: body
-  defp drain_async_body(_resp, body) when is_binary(body), do: safe_decode(body)
-  defp drain_async_body(_resp, _body), do: %{}
-
-  defp drain(resp, acc) do
-    receive do
-      msg ->
-        case Req.parse_message(resp, msg) do
-          {:ok, parts} ->
-            {chunks, done?} = collect_chunks(parts)
-            new_acc = acc ++ chunks
-            if done?, do: new_acc, else: drain(resp, new_acc)
-
-          {:error, _} ->
-            acc
-
-          :unknown ->
-            drain(resp, acc)
-        end
-    after
-      5_000 -> acc
-    end
-  end
-
-  defp safe_decode(bin) do
-    JSON.decode!(bin)
-  rescue
-    _ -> %{raw: bin}
-  end
 
   defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
 end

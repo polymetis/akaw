@@ -11,7 +11,7 @@ defmodule Akaw.Partition do
   See <https://docs.couchdb.org/en/latest/partitioned-dbs/index.html>.
   """
 
-  alias Akaw.{Client, Params, Request}
+  alias Akaw.{Client, JsonItemStream, Params, Request, Streaming}
 
   @doc "`GET /{db}/_partition/{partition}` — info about a partition."
   @spec info(Client.t(), String.t(), String.t()) :: {:ok, map()} | {:error, term()}
@@ -81,6 +81,53 @@ defmodule Akaw.Partition do
       "/#{encode(db)}/_partition/#{encode(partition)}/_explain",
       json: query
     )
+  end
+
+  @doc """
+  Streaming counterpart to `all_docs/4` — emits one row map per element,
+  scoped to the partition.
+  """
+  @spec stream_all_docs(Client.t(), String.t(), String.t(), keyword()) :: Enumerable.t()
+  def stream_all_docs(%Client{} = client, db, partition, opts \\ [])
+      when is_binary(db) and is_binary(partition) do
+    Streaming.chunks(
+      client,
+      :get,
+      "/#{encode(db)}/_partition/#{encode(partition)}/_all_docs",
+      params: Params.encode_json_keys(opts)
+    )
+    |> JsonItemStream.items()
+  end
+
+  @doc """
+  Streaming counterpart to `view/6` — partition-scoped view stream.
+  """
+  @spec stream_view(Client.t(), String.t(), String.t(), String.t(), String.t(), keyword()) ::
+          Enumerable.t()
+  def stream_view(%Client{} = client, db, partition, ddoc, view, opts \\ [])
+      when is_binary(db) and is_binary(partition) and is_binary(ddoc) and is_binary(view) do
+    Streaming.chunks(
+      client,
+      :get,
+      "/#{encode(db)}/_partition/#{encode(partition)}/_design/#{encode(ddoc)}/_view/#{encode(view)}",
+      params: Params.encode_json_keys(opts)
+    )
+    |> JsonItemStream.items()
+  end
+
+  @doc """
+  Streaming counterpart to `find/4` — partition-scoped Mango stream.
+  """
+  @spec stream_find(Client.t(), String.t(), String.t(), map()) :: Enumerable.t()
+  def stream_find(%Client{} = client, db, partition, query)
+      when is_binary(db) and is_binary(partition) and is_map(query) do
+    Streaming.chunks(
+      client,
+      :post,
+      "/#{encode(db)}/_partition/#{encode(partition)}/_find",
+      json: query
+    )
+    |> JsonItemStream.items()
   end
 
   defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)

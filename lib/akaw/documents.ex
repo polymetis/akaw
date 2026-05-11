@@ -19,7 +19,7 @@ defmodule Akaw.Documents do
   See <https://docs.couchdb.org/en/latest/api/database/bulk-api.html>.
   """
 
-  alias Akaw.{Client, Params, Request}
+  alias Akaw.{Client, JsonItemStream, Params, Request, Streaming}
 
   @doc """
   `GET /{db}/_all_docs` — list documents in the database.
@@ -33,17 +33,46 @@ defmodule Akaw.Documents do
     * `:startkey_docid`, `:endkey_docid`
 
   Use `all_docs_keys/4` for a `?keys=…` filter; CouchDB requires that to be
-  POSTed, not GETted.
-
-  > #### Streaming {: .warning}
-  >
-  > Loads the full response into memory. Streaming will land in phase 2.
+  POSTed, not GETted. For large databases use `stream_all_docs/3` to avoid
+  buffering the full response.
   """
   @spec all_docs(Client.t(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def all_docs(%Client{} = client, db, opts \\ []) when is_binary(db) do
     Request.request(client, :get, "/#{encode(db)}/_all_docs",
       params: Params.encode_json_keys(opts)
     )
+  end
+
+  @doc """
+  `GET /{db}/_all_docs` — same as `all_docs/3` but streamed lazily as an
+  `Enumerable.t()` of decoded row maps. Each element is one row:
+
+      %{"id" => "...", "key" => "...", "value" => %{"rev" => "..."},
+        "doc" => %{...}}    # if include_docs: true
+
+  Memory-bounded: the parser only buffers one row at a time, so this is
+  safe for arbitrarily large databases.
+
+  Errors raise during enumeration — `Akaw.Error` for HTTP non-2xx, the
+  underlying exception for transport failures.
+  """
+  @spec stream_all_docs(Client.t(), String.t(), keyword()) :: Enumerable.t()
+  def stream_all_docs(%Client{} = client, db, opts \\ []) when is_binary(db) do
+    Streaming.chunks(client, :get, "/#{encode(db)}/_all_docs",
+      params: Params.encode_json_keys(opts)
+    )
+    |> JsonItemStream.items()
+  end
+
+  @doc """
+  Streaming counterpart to `design_docs/3`.
+  """
+  @spec stream_design_docs(Client.t(), String.t(), keyword()) :: Enumerable.t()
+  def stream_design_docs(%Client{} = client, db, opts \\ []) when is_binary(db) do
+    Streaming.chunks(client, :get, "/#{encode(db)}/_design_docs",
+      params: Params.encode_json_keys(opts)
+    )
+    |> JsonItemStream.items()
   end
 
   @doc """
