@@ -14,8 +14,10 @@ defmodule Akaw.View do
       queries into one round-trip.
 
   As with `Akaw.Documents.all_docs/3`, JSON-typed query params (`startkey`,
-  `endkey`, `key`) are auto-encoded. For large views use `stream/5` to
-  avoid buffering the full response.
+  `endkey`, `key`) are auto-encoded. For large views, two streaming
+  flavors: `stream/5` (lazy `Enumerable.t()`; consumes the caller's
+  mailbox) and `reduce_while/7` (synchronous callback; real TCP
+  backpressure and safe from a GenServer or LiveView).
 
   See <https://docs.couchdb.org/en/latest/api/ddoc/views.html>.
   """
@@ -109,6 +111,79 @@ defmodule Akaw.View do
       params: Params.encode_json_keys(opts)
     )
     |> JsonItemStream.items()
+  end
+
+  @doc """
+  Callback variant of `stream/5` — runs the reducer synchronously inside
+  the HTTP read loop, so blocking in `reducer` applies real TCP
+  backpressure (CouchDB stalls on send while you're processing). Safe
+  to call from a GenServer / LiveView since it doesn't use the calling
+  process's mailbox.
+
+  The reducer returns `{:cont, acc}` to continue or `{:halt, acc}` to
+  stop early (the connection is closed). Returns `{:ok, final_acc}` on
+  success, `{:error, %Akaw.Error{}}` on HTTP or transport failure.
+
+  ## Example
+
+      Akaw.View.reduce_while(client, "events", "by_user", "recent", 0,
+        fn row, count ->
+          :ok = process(row)
+          {:cont, count + 1}
+        end)
+  """
+  @spec reduce_while(
+          Client.t(),
+          String.t(),
+          String.t(),
+          String.t(),
+          acc,
+          (map(), acc -> {:cont, acc} | {:halt, acc}),
+          keyword()
+        ) :: {:ok, acc} | {:error, Akaw.Error.t()}
+        when acc: term()
+  def reduce_while(%Client{} = client, db, ddoc, view, acc, reducer, opts \\ [])
+      when is_binary(db) and is_binary(ddoc) and is_binary(view) and is_function(reducer, 2) do
+    {req_opts, params_opts} = Streaming.split_req_opts(opts)
+
+    Streaming.reduce_items_while(
+      client,
+      :get,
+      view_path(db, ddoc, view),
+      [params: Params.encode_json_keys(params_opts)] ++ req_opts,
+      acc,
+      reducer
+    )
+  end
+
+  @doc """
+  Callback variant of `stream_post_keys/6`. See `reduce_while/7` for the
+  contract.
+  """
+  @spec reduce_while_post_keys(
+          Client.t(),
+          String.t(),
+          String.t(),
+          String.t(),
+          [term()],
+          acc,
+          (map(), acc -> {:cont, acc} | {:halt, acc}),
+          keyword()
+        ) :: {:ok, acc} | {:error, Akaw.Error.t()}
+        when acc: term()
+  def reduce_while_post_keys(%Client{} = client, db, ddoc, view, keys, acc, reducer, opts \\ [])
+      when is_binary(db) and is_binary(ddoc) and is_binary(view) and is_list(keys) and
+             is_function(reducer, 2) do
+    {req_opts, params_opts} = Streaming.split_req_opts(opts)
+
+    Streaming.reduce_items_while(
+      client,
+      :post,
+      view_path(db, ddoc, view),
+      [json: %{keys: keys}, params: Params.encode_json_keys(params_opts)] ++ req_opts,
+      acc,
+      reducer
+    )
   end
 
   defp view_path(db, ddoc, view) do

@@ -30,15 +30,24 @@ defmodule Akaw.JsonItemStream do
 
   alias Akaw.{Error, LineStream}
 
+  @type state :: :seek_array | :in_array | :done
+
   @doc "Stream decoded items from CouchDB's row-of-objects response shape."
   @spec items(Enumerable.t(binary())) :: Enumerable.t(map())
   def items(chunks) do
     chunks
     |> LineStream.lines()
-    |> Stream.transform(:seek_array, &handle_line/2)
+    |> Stream.transform(:seek_array, &step/2)
   end
 
-  defp handle_line(line, :seek_array) do
+  @doc """
+  One step of the line-by-line state machine: takes a line and the
+  current parser state, returns `{items_emitted, new_state}`. Shared
+  with `Akaw.Streaming.reduce_items_while/6` so the JSON-row parser
+  lives in one place.
+  """
+  @spec step(String.t(), state()) :: {[map()], state()}
+  def step(line, :seek_array) do
     if String.ends_with?(String.trim_trailing(line), "[") do
       {[], :in_array}
     else
@@ -46,7 +55,7 @@ defmodule Akaw.JsonItemStream do
     end
   end
 
-  defp handle_line(line, :in_array) do
+  def step(line, :in_array) do
     trimmed = String.trim(line)
 
     cond do
@@ -74,7 +83,7 @@ defmodule Akaw.JsonItemStream do
     end
   end
 
-  defp handle_line(_line, :done), do: {[], :done}
+  def step(_line, :done), do: {[], :done}
 
   defp safe_decode(text, original_line) do
     JSON.decode!(text)

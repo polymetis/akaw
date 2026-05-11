@@ -4,9 +4,15 @@ defmodule Akaw.Documents do
   `_bulk_docs`.
 
   Synchronous variants (`all_docs/3`, `bulk_docs/4`, …) buffer the full
-  response in memory. For large databases, use the streaming counterparts
-  (`stream_all_docs/3`, `stream_design_docs/3`) — they yield one decoded
-  row per element with bounded memory.
+  response in memory. For large databases there are two streaming
+  flavors:
+
+    * `stream_all_docs/3` / `stream_design_docs/3` — lazy
+      `Enumerable.t()` of decoded rows. Ergonomic, but consumes the
+      calling process's mailbox. Run from a `Task`, not a GenServer.
+    * `reduce_while_all_docs/5` / `reduce_while_design_docs/5` —
+      synchronous callback API. Real TCP backpressure (blocking in the
+      reducer stalls CouchDB) and safe from a GenServer or LiveView.
 
   ## A note on JSON-typed query params
 
@@ -74,6 +80,60 @@ defmodule Akaw.Documents do
       params: Params.encode_json_keys(opts)
     )
     |> JsonItemStream.items()
+  end
+
+  @doc """
+  Callback variant of `stream_all_docs/3` — runs the reducer synchronously
+  inside the HTTP read loop. Backpressured (blocking in `reducer` stalls
+  CouchDB on send) and safe from a GenServer / LiveView since it doesn't
+  use the calling process's mailbox.
+
+  The reducer returns `{:cont, acc}` to continue or `{:halt, acc}` to
+  stop early. Returns `{:ok, final_acc}` or `{:error, %Akaw.Error{}}`.
+  """
+  @spec reduce_while_all_docs(
+          Client.t(),
+          String.t(),
+          acc,
+          (map(), acc -> {:cont, acc} | {:halt, acc}),
+          keyword()
+        ) :: {:ok, acc} | {:error, Akaw.Error.t()}
+        when acc: term()
+  def reduce_while_all_docs(%Client{} = client, db, acc, reducer, opts \\ [])
+      when is_binary(db) and is_function(reducer, 2) do
+    {req_opts, params_opts} = Streaming.split_req_opts(opts)
+
+    Streaming.reduce_items_while(
+      client,
+      :get,
+      "/#{Path.encode(db)}/_all_docs",
+      [params: Params.encode_json_keys(params_opts)] ++ req_opts,
+      acc,
+      reducer
+    )
+  end
+
+  @doc "Callback variant of `stream_design_docs/3`. See `reduce_while_all_docs/5`."
+  @spec reduce_while_design_docs(
+          Client.t(),
+          String.t(),
+          acc,
+          (map(), acc -> {:cont, acc} | {:halt, acc}),
+          keyword()
+        ) :: {:ok, acc} | {:error, Akaw.Error.t()}
+        when acc: term()
+  def reduce_while_design_docs(%Client{} = client, db, acc, reducer, opts \\ [])
+      when is_binary(db) and is_function(reducer, 2) do
+    {req_opts, params_opts} = Streaming.split_req_opts(opts)
+
+    Streaming.reduce_items_while(
+      client,
+      :get,
+      "/#{Path.encode(db)}/_design_docs",
+      [params: Params.encode_json_keys(params_opts)] ++ req_opts,
+      acc,
+      reducer
+    )
   end
 
   @doc """
