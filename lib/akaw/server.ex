@@ -126,7 +126,7 @@ defmodule Akaw.Server do
   Same shape as `Akaw.Changes.stream/3` but operates at the server level.
   `:feed` is forced to `"continuous"`. Errors raise during enumeration.
   """
-  @spec stream_db_updates(Client.t(), keyword()) :: Enumerable.t()
+  @spec stream_db_updates(Client.t(), keyword()) :: Enumerable.t(map())
   def stream_db_updates(%Client{} = client, opts \\ []) do
     params = Keyword.put(opts, :feed, "continuous")
 

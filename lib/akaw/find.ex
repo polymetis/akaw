@@ -41,7 +41,7 @@ defmodule Akaw.Find do
   appear after the `docs` array in the non-streaming response) are not
   surfaced by this stream — call `find/3` directly if you need them.
   """
-  @spec stream_find(Client.t(), String.t(), map()) :: Enumerable.t()
+  @spec stream_find(Client.t(), String.t(), map()) :: Enumerable.t(map())
   def stream_find(%Client{} = client, db, query)
       when is_binary(db) and is_map(query) do
     Akaw.Streaming.chunks(client, :post, "/#{Path.encode(db)}/_find", json: query)

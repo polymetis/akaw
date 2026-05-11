@@ -113,7 +113,7 @@ defmodule Akaw.Changes do
   > accumulate messages in the calling process's mailbox. Either consume
   > promptly or arrange your own queue.
   """
-  @spec stream(Client.t(), String.t(), keyword()) :: Enumerable.t()
+  @spec stream(Client.t(), String.t(), keyword()) :: Enumerable.t(map())
   def stream(%Client{} = client, db, opts \\ []) when is_binary(db) do
     Streaming.chunks(client, :get, "/#{Path.encode(db)}/_changes",
       params: continuous_params(opts)
@@ -126,7 +126,7 @@ defmodule Akaw.Changes do
   Like `stream/3`, but POSTs a body — for `filter: "_doc_ids"` with long
   doc-id lists or `filter: "_selector"` with a Mango selector.
   """
-  @spec stream_post(Client.t(), String.t(), map(), keyword()) :: Enumerable.t()
+  @spec stream_post(Client.t(), String.t(), map(), keyword()) :: Enumerable.t(map())
   def stream_post(%Client{} = client, db, body, opts \\ [])
       when is_binary(db) and is_map(body) do
     Streaming.chunks(client, :post, "/#{Path.encode(db)}/_changes",

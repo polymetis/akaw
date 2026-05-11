@@ -87,7 +87,7 @@ defmodule Akaw.Partition do
   Streaming counterpart to `all_docs/4` — emits one row map per element,
   scoped to the partition.
   """
-  @spec stream_all_docs(Client.t(), String.t(), String.t(), keyword()) :: Enumerable.t()
+  @spec stream_all_docs(Client.t(), String.t(), String.t(), keyword()) :: Enumerable.t(map())
   def stream_all_docs(%Client{} = client, db, partition, opts \\ [])
       when is_binary(db) and is_binary(partition) do
     Streaming.chunks(
@@ -103,7 +103,7 @@ defmodule Akaw.Partition do
   Streaming counterpart to `view/6` — partition-scoped view stream.
   """
   @spec stream_view(Client.t(), String.t(), String.t(), String.t(), String.t(), keyword()) ::
-          Enumerable.t()
+          Enumerable.t(map())
   def stream_view(%Client{} = client, db, partition, ddoc, view, opts \\ [])
       when is_binary(db) and is_binary(partition) and is_binary(ddoc) and is_binary(view) do
     Streaming.chunks(
@@ -118,7 +118,7 @@ defmodule Akaw.Partition do
   @doc """
   Streaming counterpart to `find/4` — partition-scoped Mango stream.
   """
-  @spec stream_find(Client.t(), String.t(), String.t(), map()) :: Enumerable.t()
+  @spec stream_find(Client.t(), String.t(), String.t(), map()) :: Enumerable.t(map())
   def stream_find(%Client{} = client, db, partition, query)
       when is_binary(db) and is_binary(partition) and is_map(query) do
     Streaming.chunks(

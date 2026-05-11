@@ -57,7 +57,7 @@ defmodule Akaw.Documents do
   Errors raise during enumeration — `Akaw.Error` for HTTP non-2xx, the
   underlying exception for transport failures.
   """
-  @spec stream_all_docs(Client.t(), String.t(), keyword()) :: Enumerable.t()
+  @spec stream_all_docs(Client.t(), String.t(), keyword()) :: Enumerable.t(map())
   def stream_all_docs(%Client{} = client, db, opts \\ []) when is_binary(db) do
     Streaming.chunks(client, :get, "/#{Path.encode(db)}/_all_docs",
       params: Params.encode_json_keys(opts)
@@ -68,7 +68,7 @@ defmodule Akaw.Documents do
   @doc """
   Streaming counterpart to `design_docs/3`.
   """
-  @spec stream_design_docs(Client.t(), String.t(), keyword()) :: Enumerable.t()
+  @spec stream_design_docs(Client.t(), String.t(), keyword()) :: Enumerable.t(map())
   def stream_design_docs(%Client{} = client, db, opts \\ []) when is_binary(db) do
     Streaming.chunks(client, :get, "/#{Path.encode(db)}/_design_docs",
       params: Params.encode_json_keys(opts)

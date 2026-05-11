@@ -31,7 +31,7 @@ defmodule Akaw.JsonItemStream do
   alias Akaw.{Error, LineStream}
 
   @doc "Stream decoded items from CouchDB's row-of-objects response shape."
-  @spec items(Enumerable.t()) :: Enumerable.t()
+  @spec items(Enumerable.t(binary())) :: Enumerable.t(map())
   def items(chunks) do
     chunks
     |> LineStream.lines()

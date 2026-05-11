@@ -87,7 +87,7 @@ defmodule Akaw.View do
 
   Memory-bounded: parses one row at a time, safe for arbitrarily large views.
   """
-  @spec stream(Client.t(), String.t(), String.t(), String.t(), keyword()) :: Enumerable.t()
+  @spec stream(Client.t(), String.t(), String.t(), String.t(), keyword()) :: Enumerable.t(map())
   def stream(%Client{} = client, db, ddoc, view, opts \\ [])
       when is_binary(db) and is_binary(ddoc) and is_binary(view) do
     Streaming.chunks(client, :get, view_path(db, ddoc, view),
@@ -101,7 +101,7 @@ defmodule Akaw.View do
   decoded row maps.
   """
   @spec stream_post_keys(Client.t(), String.t(), String.t(), String.t(), [term()], keyword()) ::
-          Enumerable.t()
+          Enumerable.t(map())
   def stream_post_keys(%Client{} = client, db, ddoc, view, keys, opts \\ [])
       when is_binary(db) and is_binary(ddoc) and is_binary(view) and is_list(keys) do
     Streaming.chunks(client, :post, view_path(db, ddoc, view),

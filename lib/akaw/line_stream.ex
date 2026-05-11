@@ -14,7 +14,7 @@ defmodule Akaw.LineStream do
   Convert an enumerable of binary chunks into a stream of complete lines.
   Heartbeat (empty) lines are filtered out.
   """
-  @spec lines(Enumerable.t()) :: Enumerable.t()
+  @spec lines(Enumerable.t(binary())) :: Enumerable.t(String.t())
   def lines(chunks) do
     Stream.transform(
       chunks,

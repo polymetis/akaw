@@ -53,7 +53,7 @@ defmodule Akaw.Streaming do
     * `:idle_timeout` — milliseconds to wait between chunks before raising
       `%Akaw.Error{error: "stream_idle_timeout"}` (default 5 minutes).
   """
-  @spec chunks(Client.t(), Request.method(), String.t(), keyword()) :: Enumerable.t()
+  @spec chunks(Client.t(), Request.method(), String.t(), keyword()) :: Enumerable.t(binary())
   def chunks(%Client{} = client, method, path, opts \\ []) do
     Stream.resource(
       fn -> open(client, method, path, opts) end,
