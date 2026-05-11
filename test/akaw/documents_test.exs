@@ -191,5 +191,19 @@ defmodule Akaw.DocumentsTest do
       assert decoded["new_edits"] == false
       assert decoded["docs"] == [%{"_id" => "a", "_rev" => "1-x"}]
     end
+
+    test "explicit docs argument wins over a stray :docs option", %{client: client} do
+      # Caller passes :docs in opts by mistake; the positional argument wins.
+      assert {:ok, _} =
+               Akaw.Documents.bulk_docs(client, "mydb", [%{n: "right"}],
+                 docs: [%{n: "wrong"}],
+                 new_edits: false
+               )
+
+      assert_receive %{body: body}
+      decoded = Jason.decode!(body)
+      assert decoded["docs"] == [%{"n" => "right"}]
+      assert decoded["new_edits"] == false
+    end
   end
 end

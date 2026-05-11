@@ -31,7 +31,12 @@ defmodule Akaw.Reshard do
   @spec put_state(Client.t(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def put_state(%Client{} = client, new_state, opts \\ [])
       when new_state in ["running", "stopped"] do
-    body = opts |> Map.new() |> Map.put(:state, new_state)
+    body =
+      opts
+      |> Keyword.delete(:state)
+      |> Map.new()
+      |> Map.put(:state, new_state)
+
     Request.request(client, :put, "/_reshard/state", json: body)
   end
 
@@ -80,7 +85,12 @@ defmodule Akaw.Reshard do
           {:ok, map()} | {:error, term()}
   def put_job_state(%Client{} = client, job_id, new_state, opts \\ [])
       when is_binary(job_id) and new_state in ["running", "stopped"] do
-    body = opts |> Map.new() |> Map.put(:state, new_state)
+    body =
+      opts
+      |> Keyword.delete(:state)
+      |> Map.new()
+      |> Map.put(:state, new_state)
+
     Request.request(client, :put, "/_reshard/jobs/#{Path.encode(job_id)}/state", json: body)
   end
 end

@@ -175,7 +175,15 @@ defmodule Akaw.Documents do
           {:ok, [map()]} | {:error, term()}
   def bulk_docs(%Client{} = client, db, docs, opts \\ [])
       when is_binary(db) and is_list(docs) do
-    body = opts |> Map.new() |> Map.put(:docs, docs)
+    # Explicit `docs` argument always wins — strip any stray :docs in opts
+    # before merging so the contract doesn't quietly invert if this gets
+    # refactored to Map.merge later.
+    body =
+      opts
+      |> Keyword.delete(:docs)
+      |> Map.new()
+      |> Map.put(:docs, docs)
+
     Request.request(client, :post, "/#{Path.encode(db)}/_bulk_docs", json: body)
   end
 end
