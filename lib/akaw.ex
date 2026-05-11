@@ -104,6 +104,24 @@ defmodule Akaw do
       CouchDB at the socket. Reading any of these with the non-streaming
       variant loads the entire response into memory.
 
+      *Callback contract.* Every `reduce_while*` function takes
+      `(acc, reducer, opts)`. The reducer is `(item, acc) -> {:cont, acc}
+      | {:halt, acc}`; the function returns `{:ok, final_acc} |
+      {:error, %Akaw.Error{}}`.
+
+      *Per-call Req escape hatches.* The flat `opts` keyword can
+      include any of these Req-level options inline, in addition to
+      CouchDB query params:
+
+        * `:receive_timeout` — between-chunk timeout in ms
+        * `:pool_timeout` — wait time to acquire a Finch pool worker
+        * `:connect_options` — TCP/TLS options forwarded to Mint
+
+      Anything else flows through to the endpoint as a query param.
+      For continuous feeds, `:receive_timeout` auto-defaults to
+      `heartbeat * 2` when you pass an integer `:heartbeat` and don't
+      set the timeout yourself.
+
     * **Errors.** Every non-success path produces `{:error, %Akaw.Error{}}`.
       HTTP non-2xx fills `:status`, `:error`, `:reason`, `:body` from
       CouchDB. Transport failures (timeouts, DNS, refused) set

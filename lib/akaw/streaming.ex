@@ -220,27 +220,40 @@ defmodule Akaw.Streaming do
     Keyword.split(opts, @req_opt_keys)
   end
 
-  @doc """
-  For continuous-feed reducers (`_changes`, `_db_updates`): if the
-  caller didn't pass `:receive_timeout` but did pass an integer
-  `:heartbeat`, default `receive_timeout` to `heartbeat * 2` — enough
-  slack to absorb a missed heartbeat without spurious timeouts.
+  # If the user lets CouchDB pick the heartbeat (heartbeat: true /
+  # "true"), the server's default is ~60s. Doubled-with-slack gives a
+  # safe ceiling that won't fire mid-feed on a healthy connection.
+  @server_picked_heartbeat_timeout 120_000
 
-  Explicit `:receive_timeout` always wins. Non-integer heartbeats
-  (e.g. `"true"`, letting CouchDB pick) are left alone — we don't know
-  the interval.
+  @doc """
+  For continuous-feed reducers (`_changes`, `_db_updates`): default
+  `:receive_timeout` from `:heartbeat` if the caller didn't set the
+  timeout explicitly.
+
+    * Integer `heartbeat > 0` → `receive_timeout = heartbeat * 2`
+      (absorbs one missed heartbeat without spurious timeouts).
+    * `heartbeat: true` / `"true"` (server picks the interval, default
+      ~60s) → `receive_timeout = #{@server_picked_heartbeat_timeout}`.
+    * Anything else (no heartbeat, `0`, negative, garbage) → leave
+      `req_opts` alone and let Finch's default apply.
+
+  Explicit `:receive_timeout` always wins.
   """
   @spec default_receive_timeout(keyword(), keyword()) :: keyword()
   def default_receive_timeout(req_opts, couchdb_opts) do
-    cond do
-      Keyword.has_key?(req_opts, :receive_timeout) ->
-        req_opts
+    if Keyword.has_key?(req_opts, :receive_timeout) do
+      req_opts
+    else
+      case Keyword.get(couchdb_opts, :heartbeat) do
+        hb when is_integer(hb) and hb > 0 ->
+          Keyword.put(req_opts, :receive_timeout, hb * 2)
 
-      is_integer(heartbeat = Keyword.get(couchdb_opts, :heartbeat)) ->
-        Keyword.put(req_opts, :receive_timeout, heartbeat * 2)
+        server_picked when server_picked in [true, "true"] ->
+          Keyword.put(req_opts, :receive_timeout, @server_picked_heartbeat_timeout)
 
-      true ->
-        req_opts
+        _ ->
+          req_opts
+      end
     end
   end
 
@@ -278,7 +291,7 @@ defmodule Akaw.Streaming do
                   "reducer must return {:cont, acc} or {:halt, acc}, got: #{inspect(other)}"
         end
       else
-        {:cont, {req, buffer_error_chunk(resp, chunk)}}
+        handle_error_chunk(resp, chunk, req)
       end
     end
 
@@ -327,7 +340,7 @@ defmodule Akaw.Streaming do
               |> Req.Response.put_private(:akaw_halted, true)}}
         end
       else
-        {:cont, {req, buffer_error_chunk(resp, chunk)}}
+        handle_error_chunk(resp, chunk, req)
       end
     end
 
@@ -423,10 +436,41 @@ defmodule Akaw.Streaming do
 
   defp ok_status?(status), do: is_integer(status) and status in 200..299
 
-  defp buffer_error_chunk(resp, chunk) do
-    Req.Response.update_private(resp, :akaw_error_body, chunk, fn prev ->
-      [prev, chunk]
-    end)
+  # Error responses get buffered into `resp.private` so we can decode
+  # the JSON `{error, reason}` after the request completes. Capped so a
+  # misbehaving server returning a multi-megabyte HTML error page can't
+  # grow our heap: once we hit the cap the collector returns `:halt`,
+  # which closes the connection without consuming the rest of the body.
+  @max_error_body 64 * 1024
+
+  defp handle_error_chunk(resp, chunk, req) do
+    case append_error_chunk(resp, chunk) do
+      {:cont, new_resp} -> {:cont, {req, new_resp}}
+      {:halt, new_resp} -> {:halt, {req, new_resp}}
+    end
+  end
+
+  defp append_error_chunk(resp, chunk) do
+    size_so_far = Req.Response.get_private(resp, :akaw_error_body_size, 0)
+    remaining = @max_error_body - size_so_far
+
+    cond do
+      remaining <= 0 ->
+        {:halt, resp}
+
+      byte_size(chunk) <= remaining ->
+        {:cont, store_error_chunk(resp, chunk, size_so_far + byte_size(chunk))}
+
+      true ->
+        truncated = binary_part(chunk, 0, remaining)
+        {:halt, store_error_chunk(resp, truncated, @max_error_body)}
+    end
+  end
+
+  defp store_error_chunk(resp, chunk, size) do
+    resp
+    |> Req.Response.update_private(:akaw_error_body, [chunk], &[&1, chunk])
+    |> Req.Response.put_private(:akaw_error_body_size, size)
   end
 
   defp split_lines(buffer) do

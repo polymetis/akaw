@@ -160,6 +160,12 @@ defmodule Akaw.Server do
         when acc: term()
   def reduce_while_db_updates(%Client{} = client, acc, reducer, opts \\ [])
       when is_function(reducer, 2) do
+    if Keyword.has_key?(opts, :feed) do
+      raise ArgumentError,
+            "Akaw.Server.reduce_while_db_updates/4 implies feed=\"continuous\"; " <>
+              "remove :feed from opts. For non-streaming use Akaw.Server.db_updates/2."
+    end
+
     {req_opts, couchdb_opts} = Akaw.Streaming.split_req_opts(opts)
     req_opts = Akaw.Streaming.default_receive_timeout(req_opts, couchdb_opts)
     params = Keyword.put(couchdb_opts, :feed, "continuous")

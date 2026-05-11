@@ -169,8 +169,16 @@ defmodule Akaw.Integration.ReduceWhileTest do
   end
 
   describe "Akaw.Changes.reduce_while/5" do
+    # Live-arrival test: we want to prove the callback API sees changes
+    # written *after* the connection opens, not just pre-existing ones.
+    # That needs a sync point. Previously this used Process.sleep(300)
+    # which races on slow CI; now the reducer sends a message back to
+    # the test once it observes a sentinel doc, and we only write the
+    # real test docs after that.
     test "picks up changes that arrive after the connection opens",
          %{client: client, db: db} do
+      test = self()
+
       task =
         Task.async(fn ->
           Akaw.Changes.reduce_while(
@@ -178,12 +186,14 @@ defmodule Akaw.Integration.ReduceWhileTest do
             db,
             [],
             fn change, acc ->
-              new = [change["id"] | acc]
+              case change["id"] do
+                "sentinel" ->
+                  send(test, :feed_open)
+                  {:cont, acc}
 
-              if length(new) >= 2 do
-                {:halt, new}
-              else
-                {:cont, new}
+                id ->
+                  new = [id | acc]
+                  if length(new) >= 2, do: {:halt, new}, else: {:cont, new}
               end
             end,
             since: "now",
@@ -191,7 +201,10 @@ defmodule Akaw.Integration.ReduceWhileTest do
           )
         end)
 
-      Process.sleep(300)
+      # Sentinel proves the feed is established and receiving;
+      # writing live1/live2 only after we see it.
+      {:ok, _} = Akaw.Document.put(client, db, "sentinel", %{})
+      assert_receive :feed_open, 5_000
 
       {:ok, _} = Akaw.Document.put(client, db, "live1", %{n: 1})
       {:ok, _} = Akaw.Document.put(client, db, "live2", %{n: 2})

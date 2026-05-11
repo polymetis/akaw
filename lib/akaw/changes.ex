@@ -222,6 +222,7 @@ defmodule Akaw.Changes do
   end
 
   defp build_continuous_opts(opts) do
+    reject_feed_override!(opts)
     {req_opts, couchdb_opts} = Streaming.split_req_opts(opts)
     params_opts = continuous_params(couchdb_opts)
     req_opts = Streaming.default_receive_timeout(req_opts, couchdb_opts)
@@ -229,6 +230,15 @@ defmodule Akaw.Changes do
   end
 
   defp continuous_params(opts), do: Keyword.put(opts, :feed, "continuous")
+
+  defp reject_feed_override!(opts) do
+    if Keyword.has_key?(opts, :feed) do
+      raise ArgumentError,
+            "Akaw.Changes.reduce_while/N implies feed=\"continuous\"; " <>
+              "remove :feed from opts. For non-streaming feeds use " <>
+              "Akaw.Changes.get/3 or Akaw.Changes.post/4."
+    end
+  end
 
   defp decode_then(reducer) do
     fn line, acc -> reducer.(JSON.decode!(line), acc) end

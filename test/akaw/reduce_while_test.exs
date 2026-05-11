@@ -532,8 +532,23 @@ defmodule Akaw.ReduceWhileTest do
       assert Keyword.get(req, :receive_timeout) == 60_000
     end
 
-    test "default_receive_timeout/2 leaves non-integer heartbeat alone" do
-      assert Akaw.Streaming.default_receive_timeout([], heartbeat: "true") == []
+    test "default_receive_timeout/2 picks 120s when heartbeat=true / \"true\" (server picks interval)" do
+      req_true = Akaw.Streaming.default_receive_timeout([], heartbeat: true)
+      req_str = Akaw.Streaming.default_receive_timeout([], heartbeat: "true")
+
+      assert Keyword.get(req_true, :receive_timeout) == 120_000
+      assert Keyword.get(req_str, :receive_timeout) == 120_000
+    end
+
+    test "default_receive_timeout/2 ignores heartbeat: 0 (no timeout set)" do
+      assert Akaw.Streaming.default_receive_timeout([], heartbeat: 0) == []
+    end
+
+    test "default_receive_timeout/2 ignores negative heartbeat" do
+      assert Akaw.Streaming.default_receive_timeout([], heartbeat: -1_000) == []
+    end
+
+    test "default_receive_timeout/2 ignores when no heartbeat at all" do
       assert Akaw.Streaming.default_receive_timeout([], []) == []
     end
 
@@ -595,6 +610,94 @@ defmodule Akaw.ReduceWhileTest do
       assert_receive %{qs: qs}
       refute qs =~ "receive_timeout"
       assert qs =~ "limit=5"
+    end
+  end
+
+  describe "error body buffering" do
+    test "returns Akaw.Error with empty body map for an empty 5xx body" do
+      plug = fn conn -> Plug.Conn.send_resp(conn, 500, "") end
+
+      assert {:error, %Akaw.Error{status: 500, body: %{}, error: nil, reason: nil}} =
+               client_with(plug)
+               |> Akaw.View.reduce_while("db", "d", "v", 0, fn _, a -> {:cont, a + 1} end)
+    end
+
+    test "keeps raw bytes in :body when the error body isn't JSON" do
+      plug = fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("text/html")
+        |> Plug.Conn.send_resp(502, "<html>bad gateway</html>")
+      end
+
+      assert {:error, %Akaw.Error{status: 502, body: %{raw: "<html>bad gateway</html>"}}} =
+               client_with(plug)
+               |> Akaw.View.reduce_while("db", "d", "v", 0, fn _, a -> {:cont, a + 1} end)
+    end
+
+    test "caps the buffered error body at 64 KiB (truncates oversized responses)" do
+      # Body is 96 KiB; we should only keep the first 64 KiB. The
+      # leftover should not grow our heap or appear in the Error.
+      oversized = String.duplicate("x", 96 * 1024)
+
+      plug = fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("text/plain")
+        |> Plug.Conn.send_resp(500, oversized)
+      end
+
+      assert {:error, %Akaw.Error{status: 500, body: %{raw: raw}}} =
+               client_with(plug)
+               |> Akaw.View.reduce_while("db", "d", "v", 0, fn _, a -> {:cont, a + 1} end)
+
+      assert byte_size(raw) == 64 * 1024
+      assert raw == String.duplicate("x", 64 * 1024)
+    end
+  end
+
+  describe ":feed rejection" do
+    # Continuous-feed wrappers force feed=continuous internally. If the
+    # user passes :feed themselves they almost certainly meant a different
+    # endpoint — silent override would mask the mistake.
+    test "Changes.reduce_while/5 raises on user-supplied :feed" do
+      plug = fn conn -> Plug.Conn.send_resp(conn, 200, "") end
+
+      assert_raise ArgumentError, ~r/feed="continuous"/, fn ->
+        client_with(plug)
+        |> Akaw.Changes.reduce_while(
+          "db",
+          0,
+          fn _, a -> {:cont, a + 1} end,
+          feed: "longpoll"
+        )
+      end
+    end
+
+    test "Changes.reduce_while_post/6 raises on user-supplied :feed" do
+      plug = fn conn -> Plug.Conn.send_resp(conn, 200, "") end
+
+      assert_raise ArgumentError, ~r/feed="continuous"/, fn ->
+        client_with(plug)
+        |> Akaw.Changes.reduce_while_post(
+          "db",
+          %{doc_ids: ["a"]},
+          0,
+          fn _, a -> {:cont, a + 1} end,
+          feed: "longpoll"
+        )
+      end
+    end
+
+    test "Server.reduce_while_db_updates/4 raises on user-supplied :feed" do
+      plug = fn conn -> Plug.Conn.send_resp(conn, 200, "") end
+
+      assert_raise ArgumentError, ~r/feed="continuous"/, fn ->
+        client_with(plug)
+        |> Akaw.Server.reduce_while_db_updates(
+          0,
+          fn _, a -> {:cont, a + 1} end,
+          feed: "longpoll"
+        )
+      end
     end
   end
 
