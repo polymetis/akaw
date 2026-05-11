@@ -21,34 +21,34 @@ defmodule Akaw do
 
   Endpoints are grouped by the CouchDB API section they belong to:
 
-  | Module             | CouchDB endpoints                                                                                       |
-  | ------------------ | ------------------------------------------------------------------------------------------------------- |
-  | `Akaw.Server`      | `/`, `/_all_dbs`, `/_dbs_info`, `/_uuids`, `/_replicate`, `/_db_updates`, `/_membership`, `/_active_tasks`, `/_up` |
-  | `Akaw.Session`     | `/_session` (+ `refresh/3` for re-auth)                                                                 |
-  | `Akaw.SessionServer` | GenServer wrapper that holds an authed client and refreshes its cookie on a timer                     |
-  | `Akaw.Database`    | `/{db}`, `/_compact`, `/_view_cleanup`, `/_ensure_full_commit`, `/_revs_limit`                          |
-  | `Akaw.Document`    | `/{db}/{docid}` (HEAD/GET/PUT/DELETE/COPY)                                                              |
-  | `Akaw.Documents`   | `/{db}/_all_docs`, `/_bulk_get`, `/_bulk_docs`, `/_design_docs`                                         |
-  | `Akaw.Attachment`  | `/{db}/{docid}/{attname}`                                                                               |
-  | `Akaw.DesignDoc`   | `/{db}/_design/{ddoc}` + `/_info`                                                                       |
-  | `Akaw.View`        | `/{db}/_design/{ddoc}/_view/{view}` (+ `/queries`)                                                      |
-  | `Akaw.Find`        | `/{db}/_find`, `/_index`, `/_explain`                                                                   |
-  | `Akaw.Changes`     | `/{db}/_changes` (with `stream/3` for `feed=continuous`)                                                |
-  | `Akaw.Replication` | `/_replicator`, `/_scheduler/docs`, `/_scheduler/jobs`                                                  |
-  | `Akaw.Partition`   | `/{db}/_partition/{partition}/...`                                                                      |
-  | `Akaw.LocalDoc`    | `/{db}/_local/{docid}`, `/{db}/_local_docs`                                                             |
-  | `Akaw.Security`    | `/{db}/_security`                                                                                       |
-  | `Akaw.Purge`       | `/{db}/_purge`, `/_purged_infos`, `/_purged_infos_limit`                                                |
-  | `Akaw.Node`        | `/_node/{node}/_stats`, `/_system`, `/_prometheus`, `/_smoosh/status`, `/_versions`, `/_restart`        |
-  | `Akaw.Config`      | `/_node/{node}/_config[/section[/key]]`, `/_reload`                                                     |
-  | `Akaw.Cluster`     | `/_cluster_setup`                                                                                       |
-  | `Akaw.Reshard`     | `/_reshard`, `/_reshard/state`, `/_reshard/jobs[/{jobid}[/state]]`                                      |
-  | `Akaw.DesignDoc.Shows`    | `/{db}/_design/{ddoc}/_show/{func}[/{docid}]`                                                    |
-  | `Akaw.DesignDoc.Lists`    | `/{db}/_design/{ddoc}/_list/{func}/{view}` (cross-ddoc views supported)                          |
-  | `Akaw.DesignDoc.Updates`  | `/{db}/_design/{ddoc}/_update/{func}[/{docid}]`                                                  |
-  | `Akaw.DesignDoc.Rewrites` | `/{db}/_design/{ddoc}/_rewrite/{path}`                                                           |
-  | `Akaw.Search`      | `/{db}/_design/{ddoc}/_search[_info]/{index}` (Clouseau plugin)                                         |
-  | `Akaw.Nouveau`     | `/{db}/_design/{ddoc}/_nouveau[_info]/{index}` (Nouveau plugin)                                         |
+  | Module                    | CouchDB endpoints                                                                                                                         |
+  | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+  | `Akaw.Server`             | `/`, `/_all_dbs`, `/_dbs_info`, `/_uuids`, `/_replicate`, `/_db_updates`, `/_membership`, `/_active_tasks`, `/_up`, `/_search_analyze`, `/_nouveau_analyze` |
+  | `Akaw.Session`            | `/_session` (+ `refresh/3` for re-auth)                                                                                                   |
+  | `Akaw.SessionServer`      | GenServer wrapper that holds an authed client and refreshes its cookie on a timer                                                         |
+  | `Akaw.Database`           | `/{db}` (HEAD/GET/PUT/DELETE/POST), `/_compact[/{ddoc}]`, `/_view_cleanup`, `/_ensure_full_commit`, `/_revs_limit`                        |
+  | `Akaw.Document`           | `/{db}/{docid}` (HEAD/GET/PUT/DELETE/COPY)                                                                                                |
+  | `Akaw.Documents`          | `/{db}/_all_docs`, `/_bulk_get`, `/_bulk_docs`, `/_design_docs`                                                                           |
+  | `Akaw.Attachment`         | `/{db}/{docid}/{attname}`                                                                                                                 |
+  | `Akaw.DesignDoc`          | `/{db}/_design/{ddoc}` + `/_info`                                                                                                         |
+  | `Akaw.View`               | `/{db}/_design/{ddoc}/_view/{view}` (+ `/queries`)                                                                                        |
+  | `Akaw.Find`               | `/{db}/_find`, `/_index`, `/_explain`                                                                                                     |
+  | `Akaw.Changes`            | `/{db}/_changes` (with `stream/3` for `feed=continuous`)                                                                                  |
+  | `Akaw.Replication`        | replication docs in `/_replicator`, `/_scheduler/docs[/_replicator/{id}]`, `/_scheduler/jobs`                                             |
+  | `Akaw.Partition`          | `/{db}/_partition/{partition}/...`                                                                                                        |
+  | `Akaw.LocalDoc`           | `/{db}/_local/{docid}`, `/{db}/_local_docs`                                                                                               |
+  | `Akaw.Security`           | `/{db}/_security`                                                                                                                         |
+  | `Akaw.Purge`              | `/{db}/_purge`, `/_purged_infos`, `/_purged_infos_limit`                                                                                  |
+  | `Akaw.Node`               | `/_node/{node}`, `/_stats`, `/_system`, `/_prometheus`, `/_smoosh/status`, `/_versions`, `/_restart`                                      |
+  | `Akaw.Config`             | `/_node/{node}/_config[/section[/key]]`, `/_reload`                                                                                       |
+  | `Akaw.Cluster`            | `/_cluster_setup`                                                                                                                         |
+  | `Akaw.Reshard`            | `/_reshard`, `/_reshard/state`, `/_reshard/jobs[/{jobid}[/state]]`                                                                        |
+  | `Akaw.DesignDoc.Shows`    | `/{db}/_design/{ddoc}/_show/{func}[/{docid}]`                                                                                             |
+  | `Akaw.DesignDoc.Lists`    | `/{db}/_design/{ddoc}/_list/{func}/{view}` (cross-ddoc views supported)                                                                   |
+  | `Akaw.DesignDoc.Updates`  | `/{db}/_design/{ddoc}/_update/{func}[/{docid}]`                                                                                           |
+  | `Akaw.DesignDoc.Rewrites` | `/{db}/_design/{ddoc}/_rewrite/{path}`                                                                                                    |
+  | `Akaw.Search`             | `/{db}/_design/{ddoc}/_search[_info]/{index}` (Clouseau plugin)                                                                           |
+  | `Akaw.Nouveau`            | `/{db}/_design/{ddoc}/_nouveau[_info]/{index}` (Nouveau plugin)                                                                           |
 
   ## Connection pooling
 
@@ -72,12 +72,19 @@ defmodule Akaw do
       this isn't supported today.
 
     * **Streaming.** Large responses — `_changes` with `feed=continuous`,
-      `_all_docs` over giant databases, full views, large Mango finds —
-      should be consumed via the dedicated `stream_*` functions
-      (`Akaw.Documents.stream_all_docs/3`, `Akaw.View.stream/5`,
-      `Akaw.Find.stream_find/3`, `Akaw.Changes.stream/3`). Reading them
-      with the non-streaming variant loads the entire response into
-      memory.
+      `_all_docs` over giant databases, full views, large Mango finds,
+      cluster-wide `_db_updates` — should be consumed via the dedicated
+      `stream_*` functions:
+
+        * `Akaw.Changes.stream/3` and `stream_post/4`
+        * `Akaw.Documents.stream_all_docs/3` and `stream_design_docs/3`
+        * `Akaw.View.stream/5` and `stream_post_keys/6`
+        * `Akaw.Find.stream_find/3`
+        * `Akaw.Server.stream_db_updates/2`
+        * `Akaw.Partition.stream_all_docs/4`, `stream_view/6`, `stream_find/4`
+
+      Reading any of these with the non-streaming variant loads the entire
+      response into memory.
 
     * **Errors.** HTTP non-2xx responses come back as
       `{:error, %Akaw.Error{}}`. Transport errors (timeouts, DNS, refused
