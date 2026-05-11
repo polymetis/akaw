@@ -43,9 +43,25 @@ defmodule Akaw.SessionServer do
   initial login, the existing client stays in place and we retry on a
   short backoff (60s or the configured interval, whichever is smaller).
   Callers continue to see the most recent good client.
+
+  ## Telemetry
+
+  The server emits two `:telemetry` events per refresh attempt:
+
+    * `[:akaw, :session_server, :refresh, :ok]` — successful refresh.
+      Measurements: `%{duration: monotonic_ns}`.
+      Metadata: `%{name: server_name}`.
+
+    * `[:akaw, :session_server, :refresh, :error]` — failed refresh.
+      Measurements: `%{duration: monotonic_ns}`.
+      Metadata: `%{name: server_name, error: error_term}`.
+
+  Failures also log a `Logger.warning` so the operator notices without
+  a telemetry handler in place.
   """
 
   use GenServer
+  require Logger
 
   alias Akaw.Session
 
@@ -78,6 +94,7 @@ defmodule Akaw.SessionServer do
     password = Keyword.fetch!(opts, :password)
     interval = Keyword.get(opts, :refresh_interval, @default_interval)
     client_opts = Keyword.get(opts, :client_opts, [])
+    name = Keyword.get(opts, :name)
 
     base_client = Akaw.new([base_url: base_url] ++ client_opts)
 
@@ -91,7 +108,8 @@ defmodule Akaw.SessionServer do
            base_client: base_client,
            username: username,
            password: password,
-           interval: interval
+           interval: interval,
+           name: name
          }}
 
       {:error, error} ->
@@ -125,9 +143,32 @@ defmodule Akaw.SessionServer do
   end
 
   defp do_refresh(state) do
+    metadata = %{name: state.name}
+    start = System.monotonic_time()
+
     case Session.refresh(state.client, state.username, state.password) do
-      {:ok, new_client, _body} -> {:ok, %{state | client: new_client}}
-      {:error, _} = err -> err
+      {:ok, new_client, _body} ->
+        :telemetry.execute(
+          [:akaw, :session_server, :refresh, :ok],
+          %{duration: System.monotonic_time() - start},
+          metadata
+        )
+
+        {:ok, %{state | client: new_client}}
+
+      {:error, error} = err ->
+        :telemetry.execute(
+          [:akaw, :session_server, :refresh, :error],
+          %{duration: System.monotonic_time() - start},
+          Map.put(metadata, :error, error)
+        )
+
+        Logger.warning(
+          "Akaw.SessionServer refresh failed (name=#{inspect(state.name)}): " <>
+            inspect(error)
+        )
+
+        err
     end
   end
 

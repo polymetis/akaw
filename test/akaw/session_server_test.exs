@@ -85,6 +85,72 @@ defmodule Akaw.SessionServerTest do
     assert {"cookie", _} = List.keyfind(client.headers, "cookie", 0)
   end
 
+  describe "telemetry" do
+    test "emits :ok event on successful refresh" do
+      {plug, _} = counting_session_plug()
+      test = self()
+      handler_id = "akaw-test-ok-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        handler_id,
+        [:akaw, :session_server, :refresh, :ok],
+        fn _event, measurements, metadata, _config ->
+          send(test, {:telemetry_ok, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      pid = start_server(plug)
+      assert :ok = Akaw.SessionServer.refresh(pid)
+
+      assert_receive {:telemetry_ok, %{duration: duration}, %{name: _}}
+      assert is_integer(duration) and duration >= 0
+    end
+
+    test "emits :error event + Logger.warning on failed refresh" do
+      counter = :counters.new(1, [])
+      test = self()
+      handler_id = "akaw-test-err-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        handler_id,
+        [:akaw, :session_server, :refresh, :error],
+        fn _event, measurements, metadata, _config ->
+          send(test, {:telemetry_err, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      plug = fn conn ->
+        :counters.add(counter, 1, 1)
+        n = :counters.get(counter, 1)
+
+        if n == 1 do
+          conn
+          |> Plug.Conn.put_resp_header("set-cookie", "AuthSession=initial; Path=/")
+          |> Plug.Conn.put_resp_content_type("application/json")
+          |> Plug.Conn.send_resp(200, Jason.encode!(%{"ok" => true}))
+        else
+          conn
+          |> Plug.Conn.put_resp_content_type("application/json")
+          |> Plug.Conn.send_resp(
+            401,
+            Jason.encode!(%{"error" => "unauthorized", "reason" => "denied"})
+          )
+        end
+      end
+
+      pid = start_server(plug)
+      assert {:error, _} = Akaw.SessionServer.refresh(pid)
+
+      assert_receive {:telemetry_err, %{duration: _}, %{name: _, error: %Akaw.Error{status: 401}}}
+    end
+  end
+
   test "refresh failure leaves the existing client in place" do
     counter = :counters.new(1, [])
 
