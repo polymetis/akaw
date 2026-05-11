@@ -9,7 +9,28 @@ defmodule Akaw.Streaming do
   # uses Req's `into: :self` mode plus `Req.parse_message/2`, then drives
   # the producer/consumer through `Stream.resource/3`.
   #
-  # On open errors the `start_fun` raises:
+  # ## Idle timeout
+  #
+  # `next_chunk/1` does a `receive` with an `after` clause keyed on the
+  # `:idle_timeout` opt (default 5 minutes). If no chunk arrives within
+  # that window the stream raises `%Akaw.Error{}` — guards against silent
+  # stalls where a load balancer or NAT has dropped a connection and TCP
+  # hasn't noticed. For `_changes` feeds, set this to slightly more than
+  # your `:heartbeat` so heartbeats always reset the clock.
+  #
+  # ## Mailbox ownership
+  #
+  # The `receive` consumes any message and routes it through
+  # `Req.parse_message/2`; non-Finch messages return `:unknown` and we
+  # recurse. This means consuming an Akaw stream from a process that also
+  # receives other mail (a GenServer, LiveView, monitor) will drain those
+  # unrelated messages and break the consumer's contract. Run streams from
+  # a process you own — typically a `Task` or a spawned helper — until we
+  # land a proper owner-process refactor (planned alongside backpressure).
+  #
+  # ## Open errors
+  #
+  # The `start_fun` raises:
   #
   #   * `Akaw.Error` for HTTP non-2xx responses (the async body is drained
   #     once and decoded to extract CouchDB's `error` / `reason`).
@@ -18,6 +39,7 @@ defmodule Akaw.Streaming do
   alias Akaw.{Client, Error, Request}
 
   @drain_timeout 5_000
+  @default_idle_timeout to_timeout(minute: 5)
 
   @doc """
   Lazy stream of raw binary chunks from the HTTP response body.
@@ -25,6 +47,11 @@ defmodule Akaw.Streaming do
   `opts` is forwarded to `Akaw.Request.request_raw/4`; `into: :self` is set
   for you. Per-call options like `:params`, `:json`, and `:headers` work
   the same way as in non-streaming requests.
+
+  Additional streaming-only option:
+
+    * `:idle_timeout` — milliseconds to wait between chunks before raising
+      `%Akaw.Error{error: "stream_idle_timeout"}` (default 5 minutes).
   """
   @spec chunks(Client.t(), Request.method(), String.t(), keyword()) :: Enumerable.t()
   def chunks(%Client{} = client, method, path, opts \\ []) do
@@ -36,11 +63,12 @@ defmodule Akaw.Streaming do
   end
 
   defp open(client, method, path, opts) do
+    {idle_timeout, opts} = Keyword.pop(opts, :idle_timeout, @default_idle_timeout)
     opts = Keyword.put(opts, :into, :self)
 
     case Request.request_raw(client, method, path, opts) do
       {:ok, %Req.Response{status: status} = resp} when status in 200..299 ->
-        %{response: resp, finished: false}
+        %{response: resp, idle_timeout: idle_timeout, finished: false}
 
       {:ok, %Req.Response{status: status} = resp} ->
         raise build_open_error(resp, status)
@@ -61,11 +89,22 @@ defmodule Akaw.Streaming do
             {chunks, %{state | finished: finished?}}
 
           {:error, reason} ->
-            raise "Akaw.Streaming error: #{inspect(reason)}"
+            raise %Error{
+              status: nil,
+              error: "stream_transport_error",
+              reason: inspect(reason)
+            }
 
           :unknown ->
             next_chunk(state)
         end
+    after
+      state.idle_timeout ->
+        raise %Error{
+          status: nil,
+          error: "stream_idle_timeout",
+          reason: "no data received within #{state.idle_timeout}ms"
+        }
     end
   end
 
