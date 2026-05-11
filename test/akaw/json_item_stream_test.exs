@@ -56,6 +56,50 @@ defmodule Akaw.JsonItemStreamTest do
                JsonItemStream.items(chunks) |> Enum.to_list()
     end
 
+    test "raises Akaw.Error on a minified array (no row-per-line)" do
+      chunks = [
+        # All on one line — proxy / minifier scenario
+        ~s|{"rows":[{"id":"a"},{"id":"b"}]}|
+      ]
+
+      # The header itself ends with `]}`, not `[`, so :seek_array never
+      # transitions and the stream emits nothing. That's expected behaviour
+      # for fully-minified responses (we can't usefully parse them).
+      assert [] = JsonItemStream.items(chunks) |> Enum.to_list()
+    end
+
+    test "raises Akaw.Error if a line inside the array isn't a JSON object" do
+      chunks = [
+        ~s|{"rows":[\n|,
+        # A garbage line that doesn't start with `{` or `]`
+        ~s|definitely_not_json\n|,
+        ~s|]}|
+      ]
+
+      assert_raise Akaw.Error, ~r/stream_format_error/, fn ->
+        JsonItemStream.items(chunks) |> Enum.to_list()
+      end
+    end
+
+    test "raises Akaw.Error with row context on malformed JSON" do
+      chunks = [
+        ~s|{"rows":[\n|,
+        # Looks like a row but is bad JSON
+        ~s|{"id":"a","value":}\n|,
+        ~s|]}|
+      ]
+
+      exception =
+        assert_raise Akaw.Error, fn ->
+          JsonItemStream.items(chunks) |> Enum.to_list()
+        end
+
+      assert exception.error == "stream_decode_error"
+      # Diagnostic includes the inspect-quoted original line for context
+      assert exception.reason =~ "id"
+      assert exception.reason =~ "value"
+    end
+
     test "is lazy — Stream.take stops pulling chunks" do
       pulled = :counters.new(1, [])
 

@@ -18,12 +18,17 @@ defmodule Akaw.JsonItemStream do
   # line that starts with `{` as a row (stripping a trailing comma), and
   # halt at the line that starts with `]`.
   #
-  # If CouchDB ever stops pretty-printing this output (e.g. a future
-  # version, or a proxy that minifies), this approach will break and we'd
-  # need to fall back to a real incremental JSON parser. Tested against
-  # CouchDB 3.5 with empty arrays, single-row, and 500-row responses.
+  # Defensive posture: if we see anything else inside the array — typically
+  # because an intermediary proxy minified the JSON and collapsed rows onto
+  # one line, or because CouchDB changed its output format — we raise an
+  # `%Akaw.Error{}` with a diagnostic, rather than letting `JSON.decode!`
+  # explode mid-stream with no context. Real SAX-style parsing is future
+  # work; today's failure mode is at least legible.
+  #
+  # Tested against CouchDB 3.5 with empty arrays, single-row, and 500-row
+  # responses.
 
-  alias Akaw.LineStream
+  alias Akaw.{Error, LineStream}
 
   @doc "Stream decoded items from CouchDB's row-of-objects response shape."
   @spec items(Enumerable.t()) :: Enumerable.t()
@@ -51,11 +56,37 @@ defmodule Akaw.JsonItemStream do
       String.starts_with?(trimmed, "]") ->
         {[], :done}
 
-      true ->
-        item = trimmed |> String.trim_trailing(",") |> JSON.decode!()
+      String.starts_with?(trimmed, "{") ->
+        item = trimmed |> String.trim_trailing(",") |> safe_decode(line)
         {[item], :in_array}
+
+      true ->
+        raise %Error{
+          status: nil,
+          error: "stream_format_error",
+          reason:
+            "expected pretty-printed CouchDB response (one JSON object " <>
+              "per line, starting with `{`). Got: " <>
+              inspect(String.slice(trimmed, 0, 120)) <>
+              ". If a proxy between you and CouchDB minifies responses, " <>
+              "use the non-streaming variant or disable minification."
+        }
     end
   end
 
   defp handle_line(_line, :done), do: {[], :done}
+
+  defp safe_decode(text, original_line) do
+    JSON.decode!(text)
+  rescue
+    decode_error ->
+      reraise %Error{
+                status: nil,
+                error: "stream_decode_error",
+                reason:
+                  "row failed to decode: #{inspect(decode_error)}. Source line: " <>
+                    inspect(String.slice(original_line, 0, 200))
+              },
+              __STACKTRACE__
+  end
 end
