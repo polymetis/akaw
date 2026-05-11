@@ -28,8 +28,13 @@ defmodule Akaw.SessionServer do
     * `:name` (required) — the name to register the GenServer under
     * `:base_url` (required) — passed through to `Akaw.new/1`
     * `:username` (required) — CouchDB user
-    * `:password` (required) — CouchDB password. Held in process state, so
-      never log it and pull it from a secrets store, not source.
+    * `:password` (required) — CouchDB password as a binary, **or** a
+      0-arity function that returns one. Either way the value is held
+      inside a closure in process state so it doesn't appear in
+      `:sys.get_state/1` output, SASL crash reports, or `inspect/2`
+      dumps — the state shows `password_fn: #Function<...>`. Pass a
+      function if you want to defer the secret lookup (Vault, K8s
+      secret reloader, etc.) to refresh time rather than start time.
     * `:refresh_interval` — milliseconds between refresh attempts
       (default 30 minutes, well within CouchDB's default 10-minute
       `[chttpd_auth] timeout` × auto-renewal window).
@@ -91,14 +96,14 @@ defmodule Akaw.SessionServer do
   def init(opts) do
     base_url = Keyword.fetch!(opts, :base_url)
     username = Keyword.fetch!(opts, :username)
-    password = Keyword.fetch!(opts, :password)
+    password_fn = to_password_fn(Keyword.fetch!(opts, :password))
     interval = Keyword.get(opts, :refresh_interval, @default_interval)
     client_opts = Keyword.get(opts, :client_opts, [])
     name = Keyword.get(opts, :name)
 
     base_client = Akaw.new([base_url: base_url] ++ client_opts)
 
-    case Session.create(base_client, username, password) do
+    case Session.create(base_client, username, password_fn.()) do
       {:ok, authed, _body} ->
         schedule_refresh(interval)
 
@@ -107,7 +112,7 @@ defmodule Akaw.SessionServer do
            client: authed,
            base_client: base_client,
            username: username,
-           password: password,
+           password_fn: password_fn,
            interval: interval,
            name: name
          }}
@@ -116,6 +121,9 @@ defmodule Akaw.SessionServer do
         {:stop, error}
     end
   end
+
+  defp to_password_fn(fun) when is_function(fun, 0), do: fun
+  defp to_password_fn(value) when is_binary(value), do: fn -> value end
 
   @impl true
   def handle_call(:client, _from, state) do
@@ -146,7 +154,7 @@ defmodule Akaw.SessionServer do
     metadata = %{name: state.name}
     start = System.monotonic_time()
 
-    case Session.refresh(state.client, state.username, state.password) do
+    case Session.refresh(state.client, state.username, state.password_fn.()) do
       {:ok, new_client, _body} ->
         :telemetry.execute(
           [:akaw, :session_server, :refresh, :ok],

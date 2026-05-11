@@ -191,6 +191,35 @@ defmodule Akaw.SessionServerTest do
     assert {"cookie", "AuthSession=initial"} in client_after.headers
   end
 
+  test "accepts :password as a 0-arity function for deferred secret lookup" do
+    {plug, counter} = counting_session_plug()
+
+    pid =
+      start_server(plug,
+        password: fn ->
+          :counters.add(counter, 1, 1_000_000)
+          "pw"
+        end
+      )
+
+    # The closure ran once during init
+    assert :counters.get(counter, 1) == 1_000_001
+    # The plug also incremented once (real login)
+    assert :ok = Akaw.SessionServer.refresh(pid)
+    # Closure ran again for the refresh
+    assert :counters.get(counter, 1) == 2_000_002
+  end
+
+  test "password isn't visible in :sys.get_state output" do
+    {plug, _} = counting_session_plug()
+    pid = start_server(plug, password: "super-secret-password")
+
+    state = :sys.get_state(pid)
+    refute Map.has_key?(state, :password)
+    assert is_function(state.password_fn, 0)
+    refute inspect(state) =~ "super-secret-password"
+  end
+
   test "init failure prevents the server from starting" do
     plug = fn conn ->
       conn
