@@ -86,10 +86,11 @@ defmodule Akaw do
       Reading any of these with the non-streaming variant loads the entire
       response into memory.
 
-    * **Errors.** HTTP non-2xx responses come back as
-      `{:error, %Akaw.Error{}}`. Transport errors (timeouts, DNS, refused
-      connections) bypass that wrapper and surface the underlying
-      Mint/Finch exception as `{:error, exception}`.
+    * **Errors.** Every non-success path produces `{:error, %Akaw.Error{}}`.
+      HTTP non-2xx fills `:status`, `:error`, `:reason`, `:body` from
+      CouchDB. Transport failures (timeouts, DNS, refused) set
+      `status: nil`, `error: "transport_error"`, and stash the underlying
+      Mint/Finch exception in `body.exception` for the curious.
   """
 
   alias Akaw.Client

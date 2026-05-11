@@ -97,6 +97,30 @@ defmodule Akaw.RequestTest do
       assert Exception.message(err) =~ "not_found"
       assert Exception.message(err) =~ "missing"
     end
+
+    test "transport exceptions are wrapped into %Akaw.Error{status: nil}" do
+      plug = fn conn -> Req.Test.transport_error(conn, :econnrefused) end
+      client = client_with(plug)
+
+      assert {:error, %Akaw.Error{} = err} = Request.request(client, :get, "/")
+      assert err.status == nil
+      assert err.error == "transport_error"
+      assert err.reason =~ "connection refused" or err.reason =~ "econnrefused"
+      assert is_struct(err.body.exception)
+    end
+
+    test "Akaw.Error.message/1 for transport errors shows 'Akaw transport_error: ...'" do
+      err = %Akaw.Error{
+        status: nil,
+        error: "transport_error",
+        reason: "connection refused"
+      }
+
+      msg = Exception.message(err)
+      assert msg =~ "transport_error"
+      assert msg =~ "connection refused"
+      refute msg =~ "CouchDB returned HTTP"
+    end
   end
 
   describe "headers" do

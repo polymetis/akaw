@@ -74,7 +74,7 @@ defmodule Akaw.Streaming do
         raise build_open_error(resp, status)
 
       {:error, exception} ->
-        raise exception
+        raise Error.wrap_transport(exception)
     end
   end
 

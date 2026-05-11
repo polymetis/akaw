@@ -101,7 +101,7 @@ defmodule Akaw.Request do
     do: {:error, build_error(status, body)}
 
   defp handle_response({:error, exception}, _return_kind),
-    do: {:error, exception}
+    do: {:error, Error.wrap_transport(exception)}
 
   defp build_error(status, %{"error" => error, "reason" => reason} = body) do
     %Error{status: status, error: error, reason: reason, body: body}
