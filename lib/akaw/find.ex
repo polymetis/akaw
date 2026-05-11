@@ -93,7 +93,7 @@ defmodule Akaw.Find do
     Request.request(
       client,
       :delete,
-      "/#{encode(db)}/_index/#{encode(ddoc)}/#{type}/#{encode(name)}"
+      "/#{encode(db)}/_index/#{encode(ddoc)}/#{encode(type)}/#{encode(name)}"
     )
   end
 
