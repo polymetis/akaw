@@ -33,18 +33,24 @@ defmodule Akaw.Attachment do
   @doc """
   `GET /{db}/{docid}/{attname}` — fetch an attachment.
 
-  Returns `{:ok, body, meta}` where `body` is the attachment bytes and
-  `meta` is a map with `:content_type` and `:etag`. The ETag is CouchDB's
-  base64-encoded MD5 of the attachment content (in quotes per HTTP spec) —
-  useful for client-side caching, **not** the parent document's revision.
-  Read the parent doc separately if you need its rev.
+  Returns `{:ok, body, meta}`:
+
+    * `body` — typically a `binary` of the attachment bytes (image, PDF,
+      gzipped blob, …). If CouchDB happens to serve the attachment with a
+      JSON `Content-Type`, Req auto-decodes it into a map/list/scalar —
+      the spec types this as `term()` to reflect that.
+    * `meta` — `%{content_type: String.t() | nil, etag: String.t() | nil}`.
+      The ETag is CouchDB's base64-MD5 of the attachment content (in
+      quotes per HTTP spec) — useful for client-side caching, **not** the
+      parent document's revision. Read the parent doc separately if you
+      need its rev.
 
   ## Options
 
     * `:rev` — fetch the attachment from a specific revision of the parent
   """
   @spec get(Client.t(), String.t(), String.t(), String.t(), keyword()) ::
-          {:ok, binary() | term(), %{content_type: String.t() | nil, etag: String.t() | nil}}
+          {:ok, term(), %{content_type: String.t() | nil, etag: String.t() | nil}}
           | {:error, term()}
   def get(%Client{} = client, db, doc_id, att_name, opts \\ [])
       when is_binary(db) and is_binary(doc_id) and is_binary(att_name) do
