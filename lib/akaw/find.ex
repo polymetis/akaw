@@ -9,7 +9,7 @@ defmodule Akaw.Find do
   See <https://docs.couchdb.org/en/latest/api/database/find.html>.
   """
 
-  alias Akaw.{Client, Request}
+  alias Akaw.{Client, Request, Path}
 
   @doc """
   `POST /{db}/_find` — run a Mango query.
@@ -30,7 +30,7 @@ defmodule Akaw.Find do
   """
   @spec find(Client.t(), String.t(), map()) :: {:ok, map()} | {:error, term()}
   def find(%Client{} = client, db, query) when is_binary(db) and is_map(query) do
-    Request.request(client, :post, "/#{encode(db)}/_find", json: query)
+    Request.request(client, :post, "/#{Path.encode(db)}/_find", json: query)
   end
 
   @doc """
@@ -44,7 +44,7 @@ defmodule Akaw.Find do
   @spec stream_find(Client.t(), String.t(), map()) :: Enumerable.t()
   def stream_find(%Client{} = client, db, query)
       when is_binary(db) and is_map(query) do
-    Akaw.Streaming.chunks(client, :post, "/#{encode(db)}/_find", json: query)
+    Akaw.Streaming.chunks(client, :post, "/#{Path.encode(db)}/_find", json: query)
     |> Akaw.JsonItemStream.items()
   end
 
@@ -54,7 +54,7 @@ defmodule Akaw.Find do
   """
   @spec explain(Client.t(), String.t(), map()) :: {:ok, map()} | {:error, term()}
   def explain(%Client{} = client, db, query) when is_binary(db) and is_map(query) do
-    Request.request(client, :post, "/#{encode(db)}/_explain", json: query)
+    Request.request(client, :post, "/#{Path.encode(db)}/_explain", json: query)
   end
 
   @doc """
@@ -72,13 +72,13 @@ defmodule Akaw.Find do
           {:ok, map()} | {:error, term()}
   def create_index(%Client{} = client, db, index_def)
       when is_binary(db) and is_map(index_def) do
-    Request.request(client, :post, "/#{encode(db)}/_index", json: index_def)
+    Request.request(client, :post, "/#{Path.encode(db)}/_index", json: index_def)
   end
 
   @doc "`GET /{db}/_index` — list the Mango indexes on the database."
   @spec list_indexes(Client.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def list_indexes(%Client{} = client, db) when is_binary(db) do
-    Request.request(client, :get, "/#{encode(db)}/_index")
+    Request.request(client, :get, "/#{Path.encode(db)}/_index")
   end
 
   @doc """
@@ -93,9 +93,7 @@ defmodule Akaw.Find do
     Request.request(
       client,
       :delete,
-      "/#{encode(db)}/_index/#{encode(ddoc)}/#{encode(type)}/#{encode(name)}"
+      "/#{Path.encode(db)}/_index/#{Path.encode(ddoc)}/#{Path.encode(type)}/#{Path.encode(name)}"
     )
   end
-
-  defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
 end

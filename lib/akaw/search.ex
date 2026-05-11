@@ -22,7 +22,7 @@ defmodule Akaw.Search do
   See <https://docs.couchdb.org/en/latest/api/ddoc/search.html>.
   """
 
-  alias Akaw.{Client, Params, Request}
+  alias Akaw.{Client, Params, Request, Path}
 
   @doc """
   `GET /{db}/_design/{ddoc}/_search/{index}` — run a full-text search.
@@ -46,7 +46,7 @@ defmodule Akaw.Search do
     Request.request(
       client,
       :get,
-      "/#{encode(db)}/_design/#{encode(ddoc)}/_search/#{encode(index)}",
+      "/#{Path.encode(db)}/_design/#{Path.encode(ddoc)}/_search/#{Path.encode(index)}",
       params: Params.encode_search_keys(opts)
     )
   end
@@ -62,9 +62,7 @@ defmodule Akaw.Search do
     Request.request(
       client,
       :get,
-      "/#{encode(db)}/_design/#{encode(ddoc)}/_search_info/#{encode(index)}"
+      "/#{Path.encode(db)}/_design/#{Path.encode(ddoc)}/_search_info/#{Path.encode(index)}"
     )
   end
-
-  defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
 end

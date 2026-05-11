@@ -17,7 +17,7 @@ defmodule Akaw.DesignDoc do
   See <https://docs.couchdb.org/en/latest/api/ddoc/common.html>.
   """
 
-  alias Akaw.{Client, Document, Request}
+  alias Akaw.{Client, Document, Request, Path}
 
   @doc "`HEAD /{db}/_design/{ddoc}` — verify a design doc exists."
   @spec head(Client.t(), String.t(), String.t()) :: :ok | {:error, term()}
@@ -72,8 +72,6 @@ defmodule Akaw.DesignDoc do
   """
   @spec info(Client.t(), String.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def info(%Client{} = client, db, ddoc) when is_binary(db) and is_binary(ddoc) do
-    Request.request(client, :get, "/#{encode(db)}/_design/#{encode(ddoc)}/_info")
+    Request.request(client, :get, "/#{Path.encode(db)}/_design/#{Path.encode(ddoc)}/_info")
   end
-
-  defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
 end

@@ -16,19 +16,17 @@ defmodule Akaw.Security do
   See <https://docs.couchdb.org/en/latest/api/database/security.html>.
   """
 
-  alias Akaw.{Client, Request}
+  alias Akaw.{Client, Request, Path}
 
   @doc "`GET /{db}/_security` — fetch the security object."
   @spec get(Client.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def get(%Client{} = client, db) when is_binary(db) do
-    Request.request(client, :get, "/#{encode(db)}/_security")
+    Request.request(client, :get, "/#{Path.encode(db)}/_security")
   end
 
   @doc "`PUT /{db}/_security` — replace the security object."
   @spec put(Client.t(), String.t(), map()) :: {:ok, map()} | {:error, term()}
   def put(%Client{} = client, db, security) when is_binary(db) and is_map(security) do
-    Request.request(client, :put, "/#{encode(db)}/_security", json: security)
+    Request.request(client, :put, "/#{Path.encode(db)}/_security", json: security)
   end
-
-  defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
 end

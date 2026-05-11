@@ -11,7 +11,7 @@ defmodule Akaw.Config do
   See <https://docs.couchdb.org/en/latest/api/server/configuration.html>.
   """
 
-  alias Akaw.{Client, Request}
+  alias Akaw.{Client, Request, Path}
 
   @doc "`GET /_node/{node}/_config` — entire configuration map."
   @spec get(Client.t(), keyword()) :: {:ok, map()} | {:error, term()}
@@ -23,7 +23,7 @@ defmodule Akaw.Config do
   @spec get_section(Client.t(), String.t(), keyword()) ::
           {:ok, map()} | {:error, term()}
   def get_section(%Client{} = client, section, opts \\ []) when is_binary(section) do
-    Request.request(client, :get, "/_node/#{node_name(opts)}/_config/#{encode(section)}")
+    Request.request(client, :get, "/_node/#{node_name(opts)}/_config/#{Path.encode(section)}")
   end
 
   @doc """
@@ -38,7 +38,7 @@ defmodule Akaw.Config do
     Request.request(
       client,
       :get,
-      "/_node/#{node_name(opts)}/_config/#{encode(section)}/#{encode(key)}"
+      "/_node/#{node_name(opts)}/_config/#{Path.encode(section)}/#{Path.encode(key)}"
     )
   end
 
@@ -54,7 +54,7 @@ defmodule Akaw.Config do
     Request.request(
       client,
       :put,
-      "/_node/#{node_name(opts)}/_config/#{encode(section)}/#{encode(key)}",
+      "/_node/#{node_name(opts)}/_config/#{Path.encode(section)}/#{Path.encode(key)}",
       json: value
     )
   end
@@ -67,7 +67,7 @@ defmodule Akaw.Config do
     Request.request(
       client,
       :delete,
-      "/_node/#{node_name(opts)}/_config/#{encode(section)}/#{encode(key)}"
+      "/_node/#{node_name(opts)}/_config/#{Path.encode(section)}/#{Path.encode(key)}"
     )
   end
 
@@ -80,7 +80,5 @@ defmodule Akaw.Config do
     Request.request(client, :post, "/_node/#{node_name(opts)}/_config/_reload", json: %{})
   end
 
-  defp node_name(opts), do: opts |> Keyword.get(:node, "_local") |> encode()
-
-  defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
+  defp node_name(opts), do: opts |> Keyword.get(:node, "_local") |> Path.encode()
 end

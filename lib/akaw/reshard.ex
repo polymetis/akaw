@@ -8,7 +8,7 @@ defmodule Akaw.Reshard do
   See <https://docs.couchdb.org/en/latest/api/server/common.html#reshard>.
   """
 
-  alias Akaw.{Client, Request}
+  alias Akaw.{Client, Request, Path}
 
   @doc "`GET /_reshard` — overall reshard state and counts."
   @spec summary(Client.t()) :: {:ok, map()} | {:error, term()}
@@ -55,19 +55,19 @@ defmodule Akaw.Reshard do
   @doc "`GET /_reshard/jobs/{jobid}` — info on one job."
   @spec job(Client.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def job(%Client{} = client, job_id) when is_binary(job_id) do
-    Request.request(client, :get, "/_reshard/jobs/#{encode(job_id)}")
+    Request.request(client, :get, "/_reshard/jobs/#{Path.encode(job_id)}")
   end
 
   @doc "`DELETE /_reshard/jobs/{jobid}` — stop and remove a job."
   @spec delete_job(Client.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def delete_job(%Client{} = client, job_id) when is_binary(job_id) do
-    Request.request(client, :delete, "/_reshard/jobs/#{encode(job_id)}")
+    Request.request(client, :delete, "/_reshard/jobs/#{Path.encode(job_id)}")
   end
 
   @doc "`GET /_reshard/jobs/{jobid}/state` — current state of one job."
   @spec job_state(Client.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def job_state(%Client{} = client, job_id) when is_binary(job_id) do
-    Request.request(client, :get, "/_reshard/jobs/#{encode(job_id)}/state")
+    Request.request(client, :get, "/_reshard/jobs/#{Path.encode(job_id)}/state")
   end
 
   @doc """
@@ -81,8 +81,6 @@ defmodule Akaw.Reshard do
   def put_job_state(%Client{} = client, job_id, new_state, opts \\ [])
       when is_binary(job_id) and new_state in ["running", "stopped"] do
     body = opts |> Map.new() |> Map.put(:state, new_state)
-    Request.request(client, :put, "/_reshard/jobs/#{encode(job_id)}/state", json: body)
+    Request.request(client, :put, "/_reshard/jobs/#{Path.encode(job_id)}/state", json: body)
   end
-
-  defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
 end

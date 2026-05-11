@@ -25,7 +25,7 @@ defmodule Akaw.Replication do
   See <https://docs.couchdb.org/en/latest/replication/replicator.html>.
   """
 
-  alias Akaw.{Client, Document, Documents, Request}
+  alias Akaw.{Client, Document, Documents, Request, Path}
 
   @db "_replicator"
 
@@ -69,7 +69,7 @@ defmodule Akaw.Replication do
   """
   @spec status(Client.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def status(%Client{} = client, id) when is_binary(id) do
-    Request.request(client, :get, "/_scheduler/docs/_replicator/#{encode(id)}")
+    Request.request(client, :get, "/_scheduler/docs/_replicator/#{Path.encode(id)}")
   end
 
   @doc """
@@ -89,6 +89,4 @@ defmodule Akaw.Replication do
   def jobs(%Client{} = client, opts \\ []) do
     Request.request(client, :get, "/_scheduler/jobs", params: opts)
   end
-
-  defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
 end

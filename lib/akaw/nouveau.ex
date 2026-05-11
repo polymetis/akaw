@@ -15,7 +15,7 @@ defmodule Akaw.Nouveau do
   See <https://docs.couchdb.org/en/latest/ddocs/search.html#nouveau>.
   """
 
-  alias Akaw.{Client, Params, Request}
+  alias Akaw.{Client, Params, Request, Path}
 
   @doc """
   `GET /{db}/_design/{ddoc}/_nouveau/{index}` — run a Nouveau full-text
@@ -37,7 +37,7 @@ defmodule Akaw.Nouveau do
     Request.request(
       client,
       :get,
-      "/#{encode(db)}/_design/#{encode(ddoc)}/_nouveau/#{encode(index)}",
+      "/#{Path.encode(db)}/_design/#{Path.encode(ddoc)}/_nouveau/#{Path.encode(index)}",
       params: Params.encode_search_keys(opts)
     )
   end
@@ -53,9 +53,7 @@ defmodule Akaw.Nouveau do
     Request.request(
       client,
       :get,
-      "/#{encode(db)}/_design/#{encode(ddoc)}/_nouveau_info/#{encode(index)}"
+      "/#{Path.encode(db)}/_design/#{Path.encode(ddoc)}/_nouveau_info/#{Path.encode(index)}"
     )
   end
-
-  defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
 end

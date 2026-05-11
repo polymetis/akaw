@@ -12,7 +12,7 @@ defmodule Akaw.Attachment do
   See <https://docs.couchdb.org/en/latest/api/document/attachments.html>.
   """
 
-  alias Akaw.{Client, Request}
+  alias Akaw.{Client, Request, Path}
 
   @doc """
   `HEAD /{db}/{docid}/{attname}` — verify an attachment exists.
@@ -106,14 +106,8 @@ defmodule Akaw.Attachment do
   end
 
   defp path(db, doc_id, att_name) do
-    "/#{encode(db)}/#{encode_id(doc_id)}/#{encode(att_name)}"
+    "/#{Path.encode(db)}/#{Path.encode_id(doc_id)}/#{Path.encode(att_name)}"
   end
-
-  defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
-
-  defp encode_id("_design/" <> rest), do: "_design/" <> encode(rest)
-  defp encode_id("_local/" <> rest), do: "_local/" <> encode(rest)
-  defp encode_id(id), do: encode(id)
 
   defp header(%Req.Response{} = resp, name) do
     resp |> Req.Response.get_header(name) |> List.first()

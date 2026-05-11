@@ -15,7 +15,7 @@ defmodule Akaw.DesignDoc.Rewrites do
   See <https://docs.couchdb.org/en/latest/api/ddoc/rewrites.html>.
   """
 
-  alias Akaw.{Client, Request}
+  alias Akaw.{Client, Request, Path}
 
   @doc """
   Make a request through a `_rewrite` rule.
@@ -39,13 +39,11 @@ defmodule Akaw.DesignDoc.Rewrites do
     {body, opts} = Keyword.pop(opts, :body)
     {params, _opts} = Keyword.pop(opts, :params, [])
 
-    full = "/#{encode(db)}/_design/#{encode(ddoc)}/_rewrite/#{path}"
+    full = "/#{Path.encode(db)}/_design/#{Path.encode(ddoc)}/_rewrite/#{path}"
 
     req_opts = [params: params]
     req_opts = if body, do: [{:json, body} | req_opts], else: req_opts
 
     Request.request(client, method, full, req_opts)
   end
-
-  defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
 end

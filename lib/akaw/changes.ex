@@ -32,7 +32,7 @@ defmodule Akaw.Changes do
   See <https://docs.couchdb.org/en/latest/api/database/changes.html>.
   """
 
-  alias Akaw.{Client, LineStream, Request, Streaming}
+  alias Akaw.{Client, LineStream, Request, Streaming, Path}
 
   @doc """
   `GET /{db}/_changes` — fetch changes.
@@ -53,7 +53,7 @@ defmodule Akaw.Changes do
   """
   @spec get(Client.t(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def get(%Client{} = client, db, opts \\ []) when is_binary(db) do
-    Request.request(client, :get, "/#{encode(db)}/_changes", params: opts)
+    Request.request(client, :get, "/#{Path.encode(db)}/_changes", params: opts)
   end
 
   @doc """
@@ -70,7 +70,7 @@ defmodule Akaw.Changes do
           {:ok, map()} | {:error, term()}
   def post(%Client{} = client, db, body, opts \\ [])
       when is_binary(db) and is_map(body) do
-    Request.request(client, :post, "/#{encode(db)}/_changes",
+    Request.request(client, :post, "/#{Path.encode(db)}/_changes",
       json: body,
       params: opts
     )
@@ -115,7 +115,9 @@ defmodule Akaw.Changes do
   """
   @spec stream(Client.t(), String.t(), keyword()) :: Enumerable.t()
   def stream(%Client{} = client, db, opts \\ []) when is_binary(db) do
-    Streaming.chunks(client, :get, "/#{encode(db)}/_changes", params: continuous_params(opts))
+    Streaming.chunks(client, :get, "/#{Path.encode(db)}/_changes",
+      params: continuous_params(opts)
+    )
     |> LineStream.lines()
     |> Stream.map(&JSON.decode!/1)
   end
@@ -127,7 +129,7 @@ defmodule Akaw.Changes do
   @spec stream_post(Client.t(), String.t(), map(), keyword()) :: Enumerable.t()
   def stream_post(%Client{} = client, db, body, opts \\ [])
       when is_binary(db) and is_map(body) do
-    Streaming.chunks(client, :post, "/#{encode(db)}/_changes",
+    Streaming.chunks(client, :post, "/#{Path.encode(db)}/_changes",
       params: continuous_params(opts),
       json: body
     )
@@ -136,6 +138,4 @@ defmodule Akaw.Changes do
   end
 
   defp continuous_params(opts), do: Keyword.put(opts, :feed, "continuous")
-
-  defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
 end

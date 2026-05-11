@@ -10,7 +10,7 @@ defmodule Akaw.Node do
   See <https://docs.couchdb.org/en/latest/api/server/common.html#node>.
   """
 
-  alias Akaw.{Client, Request}
+  alias Akaw.{Client, Request, Path}
 
   @doc "`GET /_node/{node}` — meta info about a node (name, otp_release)."
   @spec info(Client.t(), keyword()) :: {:ok, map()} | {:error, term()}
@@ -73,7 +73,5 @@ defmodule Akaw.Node do
     Request.request(client, :post, "/_node/#{node_name(opts)}/_restart", json: %{})
   end
 
-  defp node_name(opts), do: opts |> Keyword.get(:node, "_local") |> encode()
-
-  defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
+  defp node_name(opts), do: opts |> Keyword.get(:node, "_local") |> Path.encode()
 end

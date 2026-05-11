@@ -11,13 +11,13 @@ defmodule Akaw.Partition do
   See <https://docs.couchdb.org/en/latest/partitioned-dbs/index.html>.
   """
 
-  alias Akaw.{Client, JsonItemStream, Params, Request, Streaming}
+  alias Akaw.{Client, JsonItemStream, Params, Request, Streaming, Path}
 
   @doc "`GET /{db}/_partition/{partition}` — info about a partition."
   @spec info(Client.t(), String.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def info(%Client{} = client, db, partition)
       when is_binary(db) and is_binary(partition) do
-    Request.request(client, :get, "/#{encode(db)}/_partition/#{encode(partition)}")
+    Request.request(client, :get, "/#{Path.encode(db)}/_partition/#{Path.encode(partition)}")
   end
 
   @doc """
@@ -31,7 +31,7 @@ defmodule Akaw.Partition do
     Request.request(
       client,
       :get,
-      "/#{encode(db)}/_partition/#{encode(partition)}/_all_docs",
+      "/#{Path.encode(db)}/_partition/#{Path.encode(partition)}/_all_docs",
       params: Params.encode_json_keys(opts)
     )
   end
@@ -47,7 +47,7 @@ defmodule Akaw.Partition do
     Request.request(
       client,
       :get,
-      "/#{encode(db)}/_partition/#{encode(partition)}/_design/#{encode(ddoc)}/_view/#{encode(view)}",
+      "/#{Path.encode(db)}/_partition/#{Path.encode(partition)}/_design/#{Path.encode(ddoc)}/_view/#{Path.encode(view)}",
       params: Params.encode_json_keys(opts)
     )
   end
@@ -62,7 +62,7 @@ defmodule Akaw.Partition do
     Request.request(
       client,
       :post,
-      "/#{encode(db)}/_partition/#{encode(partition)}/_find",
+      "/#{Path.encode(db)}/_partition/#{Path.encode(partition)}/_find",
       json: query
     )
   end
@@ -78,7 +78,7 @@ defmodule Akaw.Partition do
     Request.request(
       client,
       :post,
-      "/#{encode(db)}/_partition/#{encode(partition)}/_explain",
+      "/#{Path.encode(db)}/_partition/#{Path.encode(partition)}/_explain",
       json: query
     )
   end
@@ -93,7 +93,7 @@ defmodule Akaw.Partition do
     Streaming.chunks(
       client,
       :get,
-      "/#{encode(db)}/_partition/#{encode(partition)}/_all_docs",
+      "/#{Path.encode(db)}/_partition/#{Path.encode(partition)}/_all_docs",
       params: Params.encode_json_keys(opts)
     )
     |> JsonItemStream.items()
@@ -109,7 +109,7 @@ defmodule Akaw.Partition do
     Streaming.chunks(
       client,
       :get,
-      "/#{encode(db)}/_partition/#{encode(partition)}/_design/#{encode(ddoc)}/_view/#{encode(view)}",
+      "/#{Path.encode(db)}/_partition/#{Path.encode(partition)}/_design/#{Path.encode(ddoc)}/_view/#{Path.encode(view)}",
       params: Params.encode_json_keys(opts)
     )
     |> JsonItemStream.items()
@@ -124,11 +124,9 @@ defmodule Akaw.Partition do
     Streaming.chunks(
       client,
       :post,
-      "/#{encode(db)}/_partition/#{encode(partition)}/_find",
+      "/#{Path.encode(db)}/_partition/#{Path.encode(partition)}/_find",
       json: query
     )
     |> JsonItemStream.items()
   end
-
-  defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
 end

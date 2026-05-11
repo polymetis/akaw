@@ -14,7 +14,7 @@ defmodule Akaw.LocalDoc do
   See <https://docs.couchdb.org/en/latest/api/local.html>.
   """
 
-  alias Akaw.{Client, Document, Params, Request}
+  alias Akaw.{Client, Document, Params, Request, Path}
 
   @doc "`HEAD /{db}/_local/{id}` — verify a local doc exists."
   @spec head(Client.t(), String.t(), String.t()) :: :ok | {:error, term()}
@@ -53,7 +53,7 @@ defmodule Akaw.LocalDoc do
   """
   @spec list(Client.t(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def list(%Client{} = client, db, opts \\ []) when is_binary(db) do
-    Request.request(client, :get, "/#{encode(db)}/_local_docs",
+    Request.request(client, :get, "/#{Path.encode(db)}/_local_docs",
       params: Params.encode_json_keys(opts)
     )
   end
@@ -65,7 +65,7 @@ defmodule Akaw.LocalDoc do
           {:ok, map()} | {:error, term()}
   def list_keys(%Client{} = client, db, keys, opts \\ [])
       when is_binary(db) and is_list(keys) do
-    Request.request(client, :post, "/#{encode(db)}/_local_docs",
+    Request.request(client, :post, "/#{Path.encode(db)}/_local_docs",
       json: %{keys: keys},
       params: Params.encode_json_keys(opts)
     )
@@ -79,10 +79,8 @@ defmodule Akaw.LocalDoc do
           {:ok, map()} | {:error, term()}
   def list_queries(%Client{} = client, db, queries)
       when is_binary(db) and is_list(queries) do
-    Request.request(client, :post, "/#{encode(db)}/_local_docs/queries",
+    Request.request(client, :post, "/#{Path.encode(db)}/_local_docs/queries",
       json: %{queries: queries}
     )
   end
-
-  defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
 end

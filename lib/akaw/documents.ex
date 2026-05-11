@@ -20,7 +20,7 @@ defmodule Akaw.Documents do
   See <https://docs.couchdb.org/en/latest/api/database/bulk-api.html>.
   """
 
-  alias Akaw.{Client, JsonItemStream, Params, Request, Streaming}
+  alias Akaw.{Client, JsonItemStream, Params, Request, Streaming, Path}
 
   @doc """
   `GET /{db}/_all_docs` — list documents in the database.
@@ -39,7 +39,7 @@ defmodule Akaw.Documents do
   """
   @spec all_docs(Client.t(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def all_docs(%Client{} = client, db, opts \\ []) when is_binary(db) do
-    Request.request(client, :get, "/#{encode(db)}/_all_docs",
+    Request.request(client, :get, "/#{Path.encode(db)}/_all_docs",
       params: Params.encode_json_keys(opts)
     )
   end
@@ -59,7 +59,7 @@ defmodule Akaw.Documents do
   """
   @spec stream_all_docs(Client.t(), String.t(), keyword()) :: Enumerable.t()
   def stream_all_docs(%Client{} = client, db, opts \\ []) when is_binary(db) do
-    Streaming.chunks(client, :get, "/#{encode(db)}/_all_docs",
+    Streaming.chunks(client, :get, "/#{Path.encode(db)}/_all_docs",
       params: Params.encode_json_keys(opts)
     )
     |> JsonItemStream.items()
@@ -70,7 +70,7 @@ defmodule Akaw.Documents do
   """
   @spec stream_design_docs(Client.t(), String.t(), keyword()) :: Enumerable.t()
   def stream_design_docs(%Client{} = client, db, opts \\ []) when is_binary(db) do
-    Streaming.chunks(client, :get, "/#{encode(db)}/_design_docs",
+    Streaming.chunks(client, :get, "/#{Path.encode(db)}/_design_docs",
       params: Params.encode_json_keys(opts)
     )
     |> JsonItemStream.items()
@@ -86,7 +86,7 @@ defmodule Akaw.Documents do
           {:ok, map()} | {:error, term()}
   def all_docs_keys(%Client{} = client, db, keys, opts \\ [])
       when is_binary(db) and is_list(keys) do
-    Request.request(client, :post, "/#{encode(db)}/_all_docs",
+    Request.request(client, :post, "/#{Path.encode(db)}/_all_docs",
       json: %{keys: keys},
       params: Params.encode_json_keys(opts)
     )
@@ -107,7 +107,9 @@ defmodule Akaw.Documents do
           {:ok, map()} | {:error, term()}
   def all_docs_queries(%Client{} = client, db, queries)
       when is_binary(db) and is_list(queries) do
-    Request.request(client, :post, "/#{encode(db)}/_all_docs/queries", json: %{queries: queries})
+    Request.request(client, :post, "/#{Path.encode(db)}/_all_docs/queries",
+      json: %{queries: queries}
+    )
   end
 
   @doc """
@@ -118,7 +120,7 @@ defmodule Akaw.Documents do
   @spec design_docs(Client.t(), String.t(), keyword()) ::
           {:ok, map()} | {:error, term()}
   def design_docs(%Client{} = client, db, opts \\ []) when is_binary(db) do
-    Request.request(client, :get, "/#{encode(db)}/_design_docs",
+    Request.request(client, :get, "/#{Path.encode(db)}/_design_docs",
       params: Params.encode_json_keys(opts)
     )
   end
@@ -130,7 +132,7 @@ defmodule Akaw.Documents do
           {:ok, map()} | {:error, term()}
   def design_docs_keys(%Client{} = client, db, keys, opts \\ [])
       when is_binary(db) and is_list(keys) do
-    Request.request(client, :post, "/#{encode(db)}/_design_docs",
+    Request.request(client, :post, "/#{Path.encode(db)}/_design_docs",
       json: %{keys: keys},
       params: Params.encode_json_keys(opts)
     )
@@ -151,7 +153,7 @@ defmodule Akaw.Documents do
           {:ok, map()} | {:error, term()}
   def bulk_get(%Client{} = client, db, refs, opts \\ [])
       when is_binary(db) and is_list(refs) do
-    Request.request(client, :post, "/#{encode(db)}/_bulk_get",
+    Request.request(client, :post, "/#{Path.encode(db)}/_bulk_get",
       json: %{docs: refs},
       params: opts
     )
@@ -174,8 +176,6 @@ defmodule Akaw.Documents do
   def bulk_docs(%Client{} = client, db, docs, opts \\ [])
       when is_binary(db) and is_list(docs) do
     body = opts |> Map.new() |> Map.put(:docs, docs)
-    Request.request(client, :post, "/#{encode(db)}/_bulk_docs", json: body)
+    Request.request(client, :post, "/#{Path.encode(db)}/_bulk_docs", json: body)
   end
-
-  defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
 end

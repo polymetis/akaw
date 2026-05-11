@@ -13,7 +13,7 @@ defmodule Akaw.DesignDoc.Lists do
   See <https://docs.couchdb.org/en/latest/api/ddoc/render.html#db-design-design-doc-list-list-name-view-name>.
   """
 
-  alias Akaw.{Client, Params, Request}
+  alias Akaw.{Client, Params, Request, Path}
 
   @doc """
   Run a list function against a view.
@@ -55,12 +55,10 @@ defmodule Akaw.DesignDoc.Lists do
   end
 
   defp build_path(db, ddoc, func, {other_ddoc, view}) do
-    "/#{encode(db)}/_design/#{encode(ddoc)}/_list/#{encode(func)}/#{encode(other_ddoc)}/#{encode(view)}"
+    "/#{Path.encode(db)}/_design/#{Path.encode(ddoc)}/_list/#{Path.encode(func)}/#{Path.encode(other_ddoc)}/#{Path.encode(view)}"
   end
 
   defp build_path(db, ddoc, func, view) when is_binary(view) do
-    "/#{encode(db)}/_design/#{encode(ddoc)}/_list/#{encode(func)}/#{encode(view)}"
+    "/#{Path.encode(db)}/_design/#{Path.encode(ddoc)}/_list/#{Path.encode(func)}/#{Path.encode(view)}"
   end
-
-  defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
 end

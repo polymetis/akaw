@@ -11,7 +11,7 @@ defmodule Akaw.Document do
   `_design/myddoc` keep their literal slash, but the suffix is still encoded.
   """
 
-  alias Akaw.{Client, Request}
+  alias Akaw.{Client, Request, Path}
 
   @doc """
   `HEAD /{db}/{docid}` — verify a document exists.
@@ -110,11 +110,5 @@ defmodule Akaw.Document do
     )
   end
 
-  defp path(db, doc_id), do: "/#{encode(db)}/#{encode_id(doc_id)}"
-
-  defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
-
-  defp encode_id("_design/" <> rest), do: "_design/" <> encode(rest)
-  defp encode_id("_local/" <> rest), do: "_local/" <> encode(rest)
-  defp encode_id(id), do: encode(id)
+  defp path(db, doc_id), do: "/#{Path.encode(db)}/#{Path.encode_id(doc_id)}"
 end

@@ -12,7 +12,7 @@ defmodule Akaw.Database do
   See <https://docs.couchdb.org/en/latest/api/database/common.html>.
   """
 
-  alias Akaw.{Client, Request}
+  alias Akaw.{Client, Request, Path}
 
   @doc """
   `HEAD /{db}` — check whether a database exists.
@@ -22,7 +22,7 @@ defmodule Akaw.Database do
   """
   @spec head(Client.t(), String.t()) :: :ok | {:error, term()}
   def head(%Client{} = client, db) when is_binary(db) do
-    case Request.request(client, :head, "/" <> encode(db)) do
+    case Request.request(client, :head, "/" <> Path.encode(db)) do
       {:ok, _body} -> :ok
       {:error, _} = error -> error
     end
@@ -33,7 +33,7 @@ defmodule Akaw.Database do
   """
   @spec info(Client.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def info(%Client{} = client, db) when is_binary(db) do
-    Request.request(client, :get, "/" <> encode(db))
+    Request.request(client, :get, "/" <> Path.encode(db))
   end
 
   @doc """
@@ -50,7 +50,7 @@ defmodule Akaw.Database do
   """
   @spec create(Client.t(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def create(%Client{} = client, db, opts \\ []) when is_binary(db) do
-    Request.request(client, :put, "/" <> encode(db), params: opts)
+    Request.request(client, :put, "/" <> Path.encode(db), params: opts)
   end
 
   @doc """
@@ -58,7 +58,7 @@ defmodule Akaw.Database do
   """
   @spec delete(Client.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def delete(%Client{} = client, db) when is_binary(db) do
-    Request.request(client, :delete, "/" <> encode(db))
+    Request.request(client, :delete, "/" <> Path.encode(db))
   end
 
   @doc """
@@ -68,7 +68,7 @@ defmodule Akaw.Database do
   """
   @spec post(Client.t(), String.t(), map()) :: {:ok, map()} | {:error, term()}
   def post(%Client{} = client, db, doc) when is_binary(db) and is_map(doc) do
-    Request.request(client, :post, "/" <> encode(db), json: doc)
+    Request.request(client, :post, "/" <> Path.encode(db), json: doc)
   end
 
   @doc """
@@ -76,7 +76,7 @@ defmodule Akaw.Database do
   """
   @spec compact(Client.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def compact(%Client{} = client, db) when is_binary(db) do
-    Request.request(client, :post, "/" <> encode(db) <> "/_compact", json: %{})
+    Request.request(client, :post, "/" <> Path.encode(db) <> "/_compact", json: %{})
   end
 
   @doc """
@@ -87,7 +87,7 @@ defmodule Akaw.Database do
           {:ok, map()} | {:error, term()}
   def compact_views(%Client{} = client, db, ddoc)
       when is_binary(db) and is_binary(ddoc) do
-    Request.request(client, :post, "/#{encode(db)}/_compact/#{encode(ddoc)}", json: %{})
+    Request.request(client, :post, "/#{Path.encode(db)}/_compact/#{Path.encode(ddoc)}", json: %{})
   end
 
   @doc """
@@ -95,7 +95,7 @@ defmodule Akaw.Database do
   """
   @spec view_cleanup(Client.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def view_cleanup(%Client{} = client, db) when is_binary(db) do
-    Request.request(client, :post, "/" <> encode(db) <> "/_view_cleanup", json: %{})
+    Request.request(client, :post, "/" <> Path.encode(db) <> "/_view_cleanup", json: %{})
   end
 
   @doc """
@@ -106,7 +106,7 @@ defmodule Akaw.Database do
   """
   @spec ensure_full_commit(Client.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def ensure_full_commit(%Client{} = client, db) when is_binary(db) do
-    Request.request(client, :post, "/" <> encode(db) <> "/_ensure_full_commit", json: %{})
+    Request.request(client, :post, "/" <> Path.encode(db) <> "/_ensure_full_commit", json: %{})
   end
 
   @doc """
@@ -114,7 +114,7 @@ defmodule Akaw.Database do
   """
   @spec revs_limit(Client.t(), String.t()) :: {:ok, integer()} | {:error, term()}
   def revs_limit(%Client{} = client, db) when is_binary(db) do
-    Request.request(client, :get, "/" <> encode(db) <> "/_revs_limit")
+    Request.request(client, :get, "/" <> Path.encode(db) <> "/_revs_limit")
   end
 
   @doc """
@@ -124,8 +124,6 @@ defmodule Akaw.Database do
           {:ok, map()} | {:error, term()}
   def put_revs_limit(%Client{} = client, db, limit)
       when is_binary(db) and is_integer(limit) and limit > 0 do
-    Request.request(client, :put, "/#{encode(db)}/_revs_limit", json: limit)
+    Request.request(client, :put, "/#{Path.encode(db)}/_revs_limit", json: limit)
   end
-
-  defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
 end

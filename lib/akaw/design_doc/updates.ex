@@ -14,7 +14,7 @@ defmodule Akaw.DesignDoc.Updates do
   See <https://docs.couchdb.org/en/latest/api/ddoc/render.html#db-design-design-doc-update-update-name>.
   """
 
-  alias Akaw.{Client, Request}
+  alias Akaw.{Client, Request, Path}
 
   @doc """
   Invoke an update function.
@@ -43,14 +43,9 @@ defmodule Akaw.DesignDoc.Updates do
   end
 
   defp build_path(db, ddoc, func, nil),
-    do: "/#{encode(db)}/_design/#{encode(ddoc)}/_update/#{encode(func)}"
+    do: "/#{Path.encode(db)}/_design/#{Path.encode(ddoc)}/_update/#{Path.encode(func)}"
 
   defp build_path(db, ddoc, func, doc_id),
-    do: "/#{encode(db)}/_design/#{encode(ddoc)}/_update/#{encode(func)}/#{encode_id(doc_id)}"
-
-  defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
-
-  defp encode_id("_design/" <> rest), do: "_design/" <> encode(rest)
-  defp encode_id("_local/" <> rest), do: "_local/" <> encode(rest)
-  defp encode_id(id), do: encode(id)
+    do:
+      "/#{Path.encode(db)}/_design/#{Path.encode(ddoc)}/_update/#{Path.encode(func)}/#{Path.encode_id(doc_id)}"
 end

@@ -20,7 +20,7 @@ defmodule Akaw.View do
   See <https://docs.couchdb.org/en/latest/api/ddoc/views.html>.
   """
 
-  alias Akaw.{Client, JsonItemStream, Params, Request, Streaming}
+  alias Akaw.{Client, JsonItemStream, Params, Request, Streaming, Path}
 
   @doc """
   `GET /{db}/_design/{ddoc}/_view/{view}` — query a view.
@@ -112,8 +112,6 @@ defmodule Akaw.View do
   end
 
   defp view_path(db, ddoc, view) do
-    "/#{encode(db)}/_design/#{encode(ddoc)}/_view/#{encode(view)}"
+    "/#{Path.encode(db)}/_design/#{Path.encode(ddoc)}/_view/#{Path.encode(view)}"
   end
-
-  defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
 end

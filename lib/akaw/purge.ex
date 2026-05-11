@@ -12,7 +12,7 @@ defmodule Akaw.Purge do
   See <https://docs.couchdb.org/en/latest/api/database/misc.html#db-purge>.
   """
 
-  alias Akaw.{Client, Request}
+  alias Akaw.{Client, Request, Path}
 
   @doc """
   `POST /{db}/_purge` — purge specific revisions of specific documents.
@@ -27,14 +27,14 @@ defmodule Akaw.Purge do
   @spec purge(Client.t(), String.t(), %{optional(String.t()) => [String.t()]}) ::
           {:ok, map()} | {:error, term()}
   def purge(%Client{} = client, db, purges) when is_binary(db) and is_map(purges) do
-    Request.request(client, :post, "/#{encode(db)}/_purge", json: purges)
+    Request.request(client, :post, "/#{Path.encode(db)}/_purge", json: purges)
   end
 
   @doc "`GET /{db}/_purged_infos` — list of historical purges on the database."
   @spec purged_infos(Client.t(), String.t(), keyword()) ::
           {:ok, map()} | {:error, term()}
   def purged_infos(%Client{} = client, db, opts \\ []) when is_binary(db) do
-    Request.request(client, :get, "/#{encode(db)}/_purged_infos", params: opts)
+    Request.request(client, :get, "/#{Path.encode(db)}/_purged_infos", params: opts)
   end
 
   @doc """
@@ -44,7 +44,7 @@ defmodule Akaw.Purge do
   """
   @spec purged_infos_limit(Client.t(), String.t()) :: {:ok, integer()} | {:error, term()}
   def purged_infos_limit(%Client{} = client, db) when is_binary(db) do
-    Request.request(client, :get, "/#{encode(db)}/_purged_infos_limit")
+    Request.request(client, :get, "/#{Path.encode(db)}/_purged_infos_limit")
   end
 
   @doc "`PUT /{db}/_purged_infos_limit` — change the purge-history limit."
@@ -52,8 +52,6 @@ defmodule Akaw.Purge do
           {:ok, map()} | {:error, term()}
   def put_purged_infos_limit(%Client{} = client, db, limit)
       when is_binary(db) and is_integer(limit) and limit > 0 do
-    Request.request(client, :put, "/#{encode(db)}/_purged_infos_limit", json: limit)
+    Request.request(client, :put, "/#{Path.encode(db)}/_purged_infos_limit", json: limit)
   end
-
-  defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
 end
