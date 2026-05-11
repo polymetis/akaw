@@ -42,6 +42,12 @@ defmodule Akaw do
   | `Akaw.Config`      | `/_node/{node}/_config[/section[/key]]`, `/_reload`                                                     |
   | `Akaw.Cluster`     | `/_cluster_setup`                                                                                       |
   | `Akaw.Reshard`     | `/_reshard`, `/_reshard/state`, `/_reshard/jobs[/{jobid}[/state]]`                                      |
+  | `Akaw.DesignDoc.Shows`    | `/{db}/_design/{ddoc}/_show/{func}[/{docid}]`                                                    |
+  | `Akaw.DesignDoc.Lists`    | `/{db}/_design/{ddoc}/_list/{func}/{view}` (cross-ddoc views supported)                          |
+  | `Akaw.DesignDoc.Updates`  | `/{db}/_design/{ddoc}/_update/{func}[/{docid}]`                                                  |
+  | `Akaw.DesignDoc.Rewrites` | `/{db}/_design/{ddoc}/_rewrite/{path}`                                                           |
+  | `Akaw.Search`      | `/{db}/_design/{ddoc}/_search[_info]/{index}` (Clouseau plugin)                                         |
+  | `Akaw.Nouveau`     | `/{db}/_design/{ddoc}/_nouveau[_info]/{index}` (Nouveau plugin)                                         |
 
   ## Connection pooling
 
