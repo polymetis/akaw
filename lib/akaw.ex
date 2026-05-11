@@ -73,8 +73,10 @@ defmodule Akaw do
 
     * **Streaming.** Large responses — `_changes` with `feed=continuous`,
       `_all_docs` over giant databases, full views, large Mango finds,
-      cluster-wide `_db_updates` — should be consumed via the dedicated
-      `stream_*` functions:
+      cluster-wide `_db_updates` — should be consumed via one of the
+      streaming flavors:
+
+      *Lazy `Enumerable.t()` (ergonomic, mailbox-bound):*
 
         * `Akaw.Changes.stream/3` and `stream_post/4`
         * `Akaw.Documents.stream_all_docs/3` and `stream_design_docs/3`
@@ -83,8 +85,24 @@ defmodule Akaw do
         * `Akaw.Server.stream_db_updates/2`
         * `Akaw.Partition.stream_all_docs/4`, `stream_view/6`, `stream_find/4`
 
-      Reading any of these with the non-streaming variant loads the entire
-      response into memory.
+      *Synchronous callback (real TCP backpressure, safe from a GenServer
+      or LiveView):*
+
+        * `Akaw.Changes.reduce_while/5` and `reduce_while_post/6`
+        * `Akaw.Documents.reduce_while_all_docs/5` and
+          `reduce_while_design_docs/5`
+        * `Akaw.View.reduce_while/7` and `reduce_while_post_keys/8`
+        * `Akaw.Find.reduce_while/6`
+        * `Akaw.Server.reduce_while_db_updates/4`
+        * `Akaw.Partition.reduce_while_all_docs/6`,
+          `reduce_while_view/8`, `reduce_while_find/7`
+
+      The lazy variants drain the calling process's mailbox via Req's
+      `into: :self`; run them from a `Task` you own. The callback
+      variants run the reducer inline inside `Finch.stream_while`, so
+      no messages reach the caller and blocking in the reducer stalls
+      CouchDB at the socket. Reading any of these with the non-streaming
+      variant loads the entire response into memory.
 
     * **Errors.** Every non-success path produces `{:error, %Akaw.Error{}}`.
       HTTP non-2xx fills `:status`, `:error`, `:reason`, `:body` from

@@ -125,6 +125,11 @@ defmodule Akaw.Server do
 
   Same shape as `Akaw.Changes.stream/3` but operates at the server level.
   `:feed` is forced to `"continuous"`. Errors raise during enumeration.
+
+  > #### Backpressure & mailbox ownership {: .warning}
+  >
+  > Lazy variant; drains the calling process's mailbox. From a
+  > GenServer or LiveView use `reduce_while_db_updates/4` instead.
   """
   @spec stream_db_updates(Client.t(), keyword()) :: Enumerable.t(map())
   def stream_db_updates(%Client{} = client, opts \\ []) do
@@ -133,6 +138,40 @@ defmodule Akaw.Server do
     Akaw.Streaming.chunks(client, :get, "/_db_updates", params: params)
     |> Akaw.LineStream.lines()
     |> Stream.map(&JSON.decode!/1)
+  end
+
+  @doc """
+  Callback variant of `stream_db_updates/2` — runs the reducer
+  synchronously inside the HTTP read loop. Real TCP backpressure and
+  safe from a GenServer / LiveView (no mailbox involvement).
+
+  Like `Akaw.Changes.reduce_while/5`, `:receive_timeout` defaults to
+  `heartbeat * 2` if you pass an integer `:heartbeat` and don't set
+  `:receive_timeout` yourself. Explicit `:receive_timeout` always wins.
+
+  Returns `{:ok, final_acc}` or `{:error, %Akaw.Error{}}`.
+  """
+  @spec reduce_while_db_updates(
+          Client.t(),
+          acc,
+          (map(), acc -> {:cont, acc} | {:halt, acc}),
+          keyword()
+        ) :: {:ok, acc} | {:error, Akaw.Error.t()}
+        when acc: term()
+  def reduce_while_db_updates(%Client{} = client, acc, reducer, opts \\ [])
+      when is_function(reducer, 2) do
+    {req_opts, couchdb_opts} = Akaw.Streaming.split_req_opts(opts)
+    req_opts = Akaw.Streaming.default_receive_timeout(req_opts, couchdb_opts)
+    params = Keyword.put(couchdb_opts, :feed, "continuous")
+
+    Akaw.Streaming.reduce_lines_while(
+      client,
+      :get,
+      "/_db_updates",
+      [params: params] ++ req_opts,
+      acc,
+      fn line, a -> reducer.(JSON.decode!(line), a) end
+    )
   end
 
   @doc """

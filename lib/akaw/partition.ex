@@ -129,4 +129,92 @@ defmodule Akaw.Partition do
     )
     |> JsonItemStream.items()
   end
+
+  @doc """
+  Callback variant of `stream_all_docs/4` — partition-scoped, runs the
+  reducer synchronously with real TCP backpressure. Safe from a
+  GenServer / LiveView. See `Akaw.Documents.reduce_while_all_docs/5`
+  for the contract.
+  """
+  @spec reduce_while_all_docs(
+          Client.t(),
+          String.t(),
+          String.t(),
+          acc,
+          (map(), acc -> {:cont, acc} | {:halt, acc}),
+          keyword()
+        ) :: {:ok, acc} | {:error, Akaw.Error.t()}
+        when acc: term()
+  def reduce_while_all_docs(%Client{} = client, db, partition, acc, reducer, opts \\ [])
+      when is_binary(db) and is_binary(partition) and is_function(reducer, 2) do
+    {req_opts, params_opts} = Streaming.split_req_opts(opts)
+
+    Streaming.reduce_items_while(
+      client,
+      :get,
+      "/#{Path.encode(db)}/_partition/#{Path.encode(partition)}/_all_docs",
+      [params: Params.encode_json_keys(params_opts)] ++ req_opts,
+      acc,
+      reducer
+    )
+  end
+
+  @doc """
+  Callback variant of `stream_view/6` — partition-scoped, runs the
+  reducer synchronously with backpressure. See `Akaw.View.reduce_while/7`
+  for the contract.
+  """
+  @spec reduce_while_view(
+          Client.t(),
+          String.t(),
+          String.t(),
+          String.t(),
+          String.t(),
+          acc,
+          (map(), acc -> {:cont, acc} | {:halt, acc}),
+          keyword()
+        ) :: {:ok, acc} | {:error, Akaw.Error.t()}
+        when acc: term()
+  def reduce_while_view(%Client{} = client, db, partition, ddoc, view, acc, reducer, opts \\ [])
+      when is_binary(db) and is_binary(partition) and is_binary(ddoc) and is_binary(view) and
+             is_function(reducer, 2) do
+    {req_opts, params_opts} = Streaming.split_req_opts(opts)
+
+    Streaming.reduce_items_while(
+      client,
+      :get,
+      "/#{Path.encode(db)}/_partition/#{Path.encode(partition)}/_design/#{Path.encode(ddoc)}/_view/#{Path.encode(view)}",
+      [params: Params.encode_json_keys(params_opts)] ++ req_opts,
+      acc,
+      reducer
+    )
+  end
+
+  @doc """
+  Callback variant of `stream_find/4` — partition-scoped Mango with
+  backpressure. See `Akaw.Find.reduce_while/6` for the contract.
+  """
+  @spec reduce_while_find(
+          Client.t(),
+          String.t(),
+          String.t(),
+          map(),
+          acc,
+          (map(), acc -> {:cont, acc} | {:halt, acc}),
+          keyword()
+        ) :: {:ok, acc} | {:error, Akaw.Error.t()}
+        when acc: term()
+  def reduce_while_find(%Client{} = client, db, partition, query, acc, reducer, opts \\ [])
+      when is_binary(db) and is_binary(partition) and is_map(query) and is_function(reducer, 2) do
+    {req_opts, _} = Streaming.split_req_opts(opts)
+
+    Streaming.reduce_items_while(
+      client,
+      :post,
+      "/#{Path.encode(db)}/_partition/#{Path.encode(partition)}/_find",
+      [json: query] ++ req_opts,
+      acc,
+      reducer
+    )
+  end
 end

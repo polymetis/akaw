@@ -25,8 +25,10 @@ defmodule Akaw.Find do
         limit: 25
       })
 
-  For large result sets use `stream_find/3` to avoid buffering the full
-  response.
+  For large result sets there are two streaming flavors: `stream_find/3`
+  (lazy `Enumerable.t()`; consumes the caller's mailbox) and
+  `reduce_while/5` (synchronous callback; real TCP backpressure and safe
+  from a GenServer or LiveView).
   """
   @spec find(Client.t(), String.t(), map()) :: {:ok, map()} | {:error, term()}
   def find(%Client{} = client, db, query) when is_binary(db) and is_map(query) do
@@ -46,6 +48,42 @@ defmodule Akaw.Find do
       when is_binary(db) and is_map(query) do
     Akaw.Streaming.chunks(client, :post, "/#{Path.encode(db)}/_find", json: query)
     |> Akaw.JsonItemStream.items()
+  end
+
+  @doc """
+  Callback variant of `stream_find/3` — runs the reducer synchronously
+  inside the HTTP read loop. Backpressured (blocking in `reducer` stalls
+  CouchDB) and safe from a GenServer / LiveView since it doesn't use the
+  calling process's mailbox.
+
+  The reducer returns `{:cont, acc}` to continue or `{:halt, acc}` to
+  stop early. Returns `{:ok, final_acc}` or `{:error, %Akaw.Error{}}`.
+
+  `opts` accepts the Req-level escape hatches `:receive_timeout`,
+  `:pool_timeout`, `:connect_options`; everything else is ignored
+  (Mango doesn't take query params besides the body).
+  """
+  @spec reduce_while(
+          Client.t(),
+          String.t(),
+          map(),
+          acc,
+          (map(), acc -> {:cont, acc} | {:halt, acc}),
+          keyword()
+        ) :: {:ok, acc} | {:error, Akaw.Error.t()}
+        when acc: term()
+  def reduce_while(%Client{} = client, db, query, acc, reducer, opts \\ [])
+      when is_binary(db) and is_map(query) and is_function(reducer, 2) do
+    {req_opts, _} = Akaw.Streaming.split_req_opts(opts)
+
+    Akaw.Streaming.reduce_items_while(
+      client,
+      :post,
+      "/#{Path.encode(db)}/_find",
+      [json: query] ++ req_opts,
+      acc,
+      reducer
+    )
   end
 
   @doc """

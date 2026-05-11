@@ -107,11 +107,19 @@ defmodule Akaw.Changes do
     * `Akaw.Error` for HTTP non-2xx responses (e.g. 404 missing db)
     * Mint/Finch transport exceptions on network failure
 
-  > #### Backpressure {: .warning}
+  > #### Backpressure & mailbox ownership {: .warning}
   >
-  > CouchDB pushes chunks at us as fast as it can — slow consumers will
-  > accumulate messages in the calling process's mailbox. Either consume
-  > promptly or arrange your own queue.
+  > `stream/3` uses Req's `into: :self` mode under the hood, which means
+  > chunks arrive in the calling process's mailbox and a `receive` loop
+  > drains them. Two consequences:
+  >
+  >   * **Slow consumers buffer.** CouchDB pushes as fast as it can; if
+  >     you can't keep up, messages pile up in your mailbox.
+  >   * **Not safe from a GenServer / LiveView.** The `receive` swallows
+  >     *any* message, not just Finch ones. Run it from a `Task` or use
+  >     `reduce_while/5` — the synchronous callback variant — which
+  >     runs the reducer inline (real TCP backpressure, no mailbox
+  >     involvement).
   """
   @spec stream(Client.t(), String.t(), keyword()) :: Enumerable.t(map())
   def stream(%Client{} = client, db, opts \\ []) when is_binary(db) do
@@ -137,5 +145,92 @@ defmodule Akaw.Changes do
     |> Stream.map(&JSON.decode!/1)
   end
 
+  @doc """
+  Callback variant of `stream/3` — runs the reducer synchronously inside
+  the HTTP read loop. Unlike the lazy `stream/3`, this is safe to call
+  from a GenServer or LiveView: chunks are consumed inline rather than
+  delivered to the calling process's mailbox, so no unrelated messages
+  get drained.
+
+  `reducer` is called with each decoded change object. Return
+  `{:cont, acc}` to keep reading or `{:halt, acc}` to close the
+  connection. Returns `{:ok, final_acc}` or `{:error, %Akaw.Error{}}`.
+
+  ## Idle timeout
+
+  `opts` is a flat keyword of CouchDB query params; you can also drop
+  `:receive_timeout` / `:pool_timeout` / `:connect_options` in there
+  and they'll be routed to Req instead of becoming query params.
+
+  Continuous feeds can sit silent for long stretches. If you pass an
+  integer `:heartbeat`, `:receive_timeout` defaults to `heartbeat * 2`
+  automatically — no spurious 15s timeouts from Finch's default. An
+  explicit `:receive_timeout` always wins.
+
+      # heartbeat 30s → receive_timeout auto-set to 60s
+      Akaw.Changes.reduce_while(client, "users", 0,
+        fn _, n -> {:cont, n + 1} end,
+        since: "now", heartbeat: 30_000)
+  """
+  @spec reduce_while(
+          Client.t(),
+          String.t(),
+          acc,
+          (map(), acc -> {:cont, acc} | {:halt, acc}),
+          keyword()
+        ) :: {:ok, acc} | {:error, Akaw.Error.t()}
+        when acc: term()
+  def reduce_while(%Client{} = client, db, acc, reducer, opts \\ [])
+      when is_binary(db) and is_function(reducer, 2) do
+    {req_opts, params_opts} = build_continuous_opts(opts)
+
+    Streaming.reduce_lines_while(
+      client,
+      :get,
+      "/#{Path.encode(db)}/_changes",
+      [params: params_opts] ++ req_opts,
+      acc,
+      decode_then(reducer)
+    )
+  end
+
+  @doc """
+  Like `reduce_while/5`, but POSTs a body. See `stream_post/4` for the
+  filter-list / selector use cases.
+  """
+  @spec reduce_while_post(
+          Client.t(),
+          String.t(),
+          map(),
+          acc,
+          (map(), acc -> {:cont, acc} | {:halt, acc}),
+          keyword()
+        ) :: {:ok, acc} | {:error, Akaw.Error.t()}
+        when acc: term()
+  def reduce_while_post(%Client{} = client, db, body, acc, reducer, opts \\ [])
+      when is_binary(db) and is_map(body) and is_function(reducer, 2) do
+    {req_opts, params_opts} = build_continuous_opts(opts)
+
+    Streaming.reduce_lines_while(
+      client,
+      :post,
+      "/#{Path.encode(db)}/_changes",
+      [params: params_opts, json: body] ++ req_opts,
+      acc,
+      decode_then(reducer)
+    )
+  end
+
+  defp build_continuous_opts(opts) do
+    {req_opts, couchdb_opts} = Streaming.split_req_opts(opts)
+    params_opts = continuous_params(couchdb_opts)
+    req_opts = Streaming.default_receive_timeout(req_opts, couchdb_opts)
+    {req_opts, params_opts}
+  end
+
   defp continuous_params(opts), do: Keyword.put(opts, :feed, "continuous")
+
+  defp decode_then(reducer) do
+    fn line, acc -> reducer.(JSON.decode!(line), acc) end
+  end
 end
