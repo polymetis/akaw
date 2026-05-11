@@ -3,9 +3,10 @@ defmodule Akaw.Documents do
   Multi-document endpoints — `_all_docs`, `_design_docs`, `_bulk_get`,
   `_bulk_docs`.
 
-  These currently buffer the full response in memory. Streaming variants
-  for `_all_docs` and friends land in phase 2 alongside `_changes` and view
-  streaming.
+  Synchronous variants (`all_docs/3`, `bulk_docs/4`, …) buffer the full
+  response in memory. For large databases, use the streaming counterparts
+  (`stream_all_docs/3`, `stream_design_docs/3`) — they yield one decoded
+  row per element with bounded memory.
 
   ## A note on JSON-typed query params
 

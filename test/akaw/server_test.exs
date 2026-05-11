@@ -84,4 +84,23 @@ defmodule Akaw.ServerTest do
     assert {:ok, _} = Akaw.Server.membership(client)
     assert_receive %{method: "GET", path: "/_membership"}
   end
+
+  test "stream_db_updates/2 forces feed=continuous and forwards other opts" do
+    plug = fn conn ->
+      Process.put(:akaw_db_updates_qs, conn.query_string)
+      Req.Test.json(conn, %{})
+    end
+
+    client = Akaw.new(base_url: "http://x", req_options: [plug: plug, retry: false])
+
+    try do
+      client |> Akaw.Server.stream_db_updates(since: "now") |> Enum.take(1)
+    rescue
+      _ -> :ok
+    end
+
+    qs = Process.get(:akaw_db_updates_qs) || ""
+    assert qs =~ "feed=continuous"
+    assert qs =~ "since=now"
+  end
 end

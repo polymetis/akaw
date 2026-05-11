@@ -108,15 +108,31 @@ defmodule Akaw.Server do
 
   > #### Streaming feeds {: .warning}
   >
-  > For `feed: "continuous"` or `feed: "eventsource"` use the dedicated
-  > streaming function (planned, phase 2) rather than this one — the response
-  > is unbounded and will fill memory if buffered.
+  > For `feed: "continuous"` use `stream_db_updates/2` instead — the
+  > response is unbounded and will fill memory if buffered.
 
   See <https://docs.couchdb.org/en/latest/api/server/common.html#db-updates>.
   """
   @spec db_updates(Client.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def db_updates(%Client{} = client, opts \\ []) do
     Request.request(client, :get, "/_db_updates", params: opts)
+  end
+
+  @doc """
+  Stream the `_db_updates` continuous feed — db-level lifecycle events
+  (created, updated, deleted) across the entire cluster, as a lazy
+  `Stream` of decoded event maps.
+
+  Same shape as `Akaw.Changes.stream/3` but operates at the server level.
+  `:feed` is forced to `"continuous"`. Errors raise during enumeration.
+  """
+  @spec stream_db_updates(Client.t(), keyword()) :: Enumerable.t()
+  def stream_db_updates(%Client{} = client, opts \\ []) do
+    params = Keyword.put(opts, :feed, "continuous")
+
+    Akaw.Streaming.chunks(client, :get, "/_db_updates", params: params)
+    |> Akaw.LineStream.lines()
+    |> Stream.map(&JSON.decode!/1)
   end
 
   @doc """

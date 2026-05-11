@@ -7,14 +7,29 @@ defmodule Akaw.Session do
 
     1. `create/3` posts credentials and returns a *new* client carrying the
        `AuthSession` cookie.
-    2. The returned client is used for subsequent requests; CouchDB
-       refreshes the cookie automatically on each request.
+    2. The returned client is used for subsequent requests.
     3. `delete/1` invalidates the session.
 
   Other auth styles don't go through `/_session`:
 
     * **Basic auth** — pass `auth: {:basic, user, pass}` to `Akaw.new/1`.
     * **JWT bearer** — pass `auth: {:bearer, token}` to `Akaw.new/1`.
+
+  ## Cookie lifetime and rotation
+
+  CouchDB's `AuthSession` cookie has a finite lifetime — controlled by the
+  `[chttpd_auth] timeout` config (default 10 minutes from issuance, with
+  half-time auto-renewal when CouchDB sees a request close to expiry). For
+  long-running clients you have three options:
+
+    * **Periodic re-auth** — call `refresh/3` on a schedule.
+    * **GenServer-backed** — use `Akaw.SessionServer`, which holds a
+      client and refreshes it on a timer with no further code from you.
+    * **On-401 retry** — catch a `%Akaw.Error{status: 401}`, call
+      `refresh/3`, and replay the failed request.
+
+  This module does not automatically capture rotated cookies from
+  intervening responses — refresh is explicit.
 
   See <https://docs.couchdb.org/en/latest/api/server/authn.html>.
   """
@@ -78,6 +93,37 @@ defmodule Akaw.Session do
   """
   @spec delete(Client.t()) :: {:ok, map()} | {:error, term()}
   def delete(%Client{} = client), do: Request.request(client, :delete, "/_session")
+
+  @doc """
+  Re-authenticate and return a client carrying a fresh `AuthSession` cookie.
+
+  Functionally equivalent to `create/3` but named for intent — call this
+  to keep a long-lived client from expiring. Strips any existing cookie
+  header from `client` before re-auth so the previous AuthSession isn't
+  sent alongside the credentials.
+
+  ## Example
+
+      {:ok, authed, _} = Akaw.Session.create(client, "admin", "secret")
+      # ... use authed ...
+      # Some time later:
+      {:ok, refreshed, _} = Akaw.Session.refresh(authed, "admin", "secret")
+
+  For automated refresh, see `Akaw.SessionServer`.
+  """
+  @spec refresh(Client.t(), String.t(), String.t()) ::
+          {:ok, Client.t(), map()} | {:error, term()}
+  def refresh(%Client{} = client, name, password)
+      when is_binary(name) and is_binary(password) do
+    create(strip_cookie(client), name, password)
+  end
+
+  defp strip_cookie(%Client{headers: headers} = client) do
+    %Client{
+      client
+      | headers: Enum.reject(headers, fn {k, _} -> String.downcase(k) == "cookie" end)
+    }
+  end
 
   defp extract_auth_session(%Req.Response{} = resp) do
     resp

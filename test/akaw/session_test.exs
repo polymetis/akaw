@@ -156,4 +156,57 @@ defmodule Akaw.SessionTest do
       assert_receive {:method, "DELETE", :path, "/_session"}
     end
   end
+
+  describe "refresh/3" do
+    test "re-auths and replaces the cookie on the returned client" do
+      counter = :counters.new(1, [])
+
+      plug = fn conn ->
+        :counters.add(counter, 1, 1)
+        n = :counters.get(counter, 1)
+
+        conn
+        |> Plug.Conn.put_resp_header("set-cookie", "AuthSession=tok_#{n}; Path=/")
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, Jason.encode!(%{"ok" => true, "name" => "admin"}))
+      end
+
+      base = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+
+      {:ok, c1, _} = Akaw.Session.create(base, "admin", "pw")
+      assert {"cookie", "AuthSession=tok_1"} in c1.headers
+
+      {:ok, c2, _} = Akaw.Session.refresh(c1, "admin", "pw")
+      assert {"cookie", "AuthSession=tok_2"} in c2.headers
+
+      # Old cookie isn't sitting alongside the new one
+      cookies = for {"cookie", v} <- c2.headers, do: v
+      assert cookies == ["AuthSession=tok_2"]
+    end
+
+    test "strips any prior cookie before re-auth so we don't send the old AuthSession" do
+      test = self()
+
+      plug = fn conn ->
+        send(test, {:cookies, Plug.Conn.get_req_header(conn, "cookie")})
+
+        conn
+        |> Plug.Conn.put_resp_header("set-cookie", "AuthSession=NEW; Path=/")
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, Jason.encode!(%{"ok" => true}))
+      end
+
+      stale =
+        Akaw.new(
+          base_url: "http://x",
+          headers: [{"cookie", "AuthSession=STALE"}],
+          req_options: [plug: plug]
+        )
+
+      assert {:ok, _, _} = Akaw.Session.refresh(stale, "admin", "pw")
+
+      # Refresh request must not include the stale cookie header
+      assert_receive {:cookies, []}
+    end
+  end
 end

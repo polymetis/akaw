@@ -24,7 +24,8 @@ defmodule Akaw do
   | Module             | CouchDB endpoints                                                                                       |
   | ------------------ | ------------------------------------------------------------------------------------------------------- |
   | `Akaw.Server`      | `/`, `/_all_dbs`, `/_dbs_info`, `/_uuids`, `/_replicate`, `/_db_updates`, `/_membership`, `/_active_tasks`, `/_up` |
-  | `Akaw.Session`     | `/_session`                                                                                             |
+  | `Akaw.Session`     | `/_session` (+ `refresh/3` for re-auth)                                                                 |
+  | `Akaw.SessionServer` | GenServer wrapper that holds an authed client and refreshes its cookie on a timer                     |
   | `Akaw.Database`    | `/{db}`, `/_compact`, `/_view_cleanup`, `/_ensure_full_commit`, `/_revs_limit`                          |
   | `Akaw.Document`    | `/{db}/{docid}` (HEAD/GET/PUT/DELETE/COPY)                                                              |
   | `Akaw.Documents`   | `/{db}/_all_docs`, `/_bulk_get`, `/_bulk_docs`, `/_design_docs`                                         |
@@ -71,9 +72,11 @@ defmodule Akaw do
       this isn't supported today.
 
     * **Streaming.** Large responses — `_changes` with `feed=continuous`,
-      `_all_docs` over giant databases, full views — should be consumed via
-      the dedicated `stream_*` functions (planned for phase 2). Reading them
-      with the non-streaming variant will load the entire response into
+      `_all_docs` over giant databases, full views, large Mango finds —
+      should be consumed via the dedicated `stream_*` functions
+      (`Akaw.Documents.stream_all_docs/3`, `Akaw.View.stream/5`,
+      `Akaw.Find.stream_find/3`, `Akaw.Changes.stream/3`). Reading them
+      with the non-streaming variant loads the entire response into
       memory.
 
     * **Errors.** HTTP non-2xx responses come back as
