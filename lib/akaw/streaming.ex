@@ -109,11 +109,17 @@ defmodule Akaw.Streaming do
   end
 
   defp collect_chunks(parts) do
-    Enum.reduce(parts, {[], false}, fn
-      {:data, chunk}, {acc, fin} -> {acc ++ [chunk], fin}
-      :done, {acc, _} -> {acc, true}
-      _, acc -> acc
-    end)
+    # Build a reversed accumulator with O(1) prepends, then reverse once
+    # at the end — `acc ++ [chunk]` is O(n) per element and runs in the
+    # hot streaming path.
+    {rev_chunks, finished?} =
+      Enum.reduce(parts, {[], false}, fn
+        {:data, chunk}, {acc, fin} -> {[chunk | acc], fin}
+        :done, {acc, _} -> {acc, true}
+        _, acc -> acc
+      end)
+
+    {Enum.reverse(rev_chunks), finished?}
   end
 
   defp close(%{response: response}) do
