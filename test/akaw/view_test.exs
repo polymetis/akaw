@@ -84,4 +84,66 @@ defmodule Akaw.ViewTest do
       assert length(decoded["queries"]) == 2
     end
   end
+
+  describe "stream/5" do
+    test "→ GET /_view/{view} (streaming variant); JSON-encodes startkey/endkey" do
+      plug = fn conn ->
+        Process.put(:akaw_view_stream_method, conn.method)
+        Process.put(:akaw_view_stream_path, conn.request_path)
+        Process.put(:akaw_view_stream_qs, conn.query_string)
+        Req.Test.json(conn, %{})
+      end
+
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug, retry: false])
+
+      try do
+        client
+        |> Akaw.View.stream("mydb", "ddoc1", "by_name", startkey: "a", endkey: "z")
+        |> Enum.take(1)
+      rescue
+        _ -> :ok
+      end
+
+      assert Process.get(:akaw_view_stream_method) == "GET"
+
+      assert Process.get(:akaw_view_stream_path) ==
+               "/mydb/_design/ddoc1/_view/by_name"
+
+      qs = Process.get(:akaw_view_stream_qs) || ""
+      decoded = URI.decode_query(qs)
+      assert decoded["startkey"] == "\"a\""
+      assert decoded["endkey"] == "\"z\""
+    end
+  end
+
+  describe "stream_post_keys/6" do
+    test "POSTs to /_view/{view} with {keys: [...]} body (streaming)" do
+      plug = fn conn ->
+        {:ok, body, _} = Plug.Conn.read_body(conn)
+        Process.put(:akaw_view_postk_method, conn.method)
+        Process.put(:akaw_view_postk_path, conn.request_path)
+        Process.put(:akaw_view_postk_body, body)
+        Req.Test.json(conn, %{})
+      end
+
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug, retry: false])
+
+      try do
+        client
+        |> Akaw.View.stream_post_keys("mydb", "ddoc1", "by_name", ["alice", "bob"])
+        |> Enum.take(1)
+      rescue
+        _ -> :ok
+      end
+
+      assert Process.get(:akaw_view_postk_method) == "POST"
+
+      assert Process.get(:akaw_view_postk_path) ==
+               "/mydb/_design/ddoc1/_view/by_name"
+
+      assert Jason.decode!(Process.get(:akaw_view_postk_body)) == %{
+               "keys" => ["alice", "bob"]
+             }
+    end
+  end
 end

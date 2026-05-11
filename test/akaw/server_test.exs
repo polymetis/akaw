@@ -85,6 +85,33 @@ defmodule Akaw.ServerTest do
     assert_receive %{method: "GET", path: "/_membership"}
   end
 
+  test "search_analyze/2 POSTs the analyzer+text body to /_search_analyze",
+       %{client: client} do
+    assert {:ok, _} =
+             Akaw.Server.search_analyze(client, %{
+               analyzer: "standard",
+               text: "running shoes"
+             })
+
+    assert_receive %{method: "POST", path: "/_search_analyze", body: body}
+    decoded = Jason.decode!(body)
+    assert decoded["analyzer"] == "standard"
+    assert decoded["text"] == "running shoes"
+  end
+
+  test "nouveau_analyze/2 POSTs to /_nouveau_analyze", %{client: client} do
+    assert {:ok, _} =
+             Akaw.Server.nouveau_analyze(client, %{
+               analyzer: "standard",
+               text: "hello world"
+             })
+
+    assert_receive %{method: "POST", path: "/_nouveau_analyze", body: body}
+    decoded = Jason.decode!(body)
+    assert decoded["analyzer"] == "standard"
+    assert decoded["text"] == "hello world"
+  end
+
   test "stream_db_updates/2 forces feed=continuous and forwards other opts" do
     plug = fn conn ->
       Process.put(:akaw_db_updates_qs, conn.query_string)

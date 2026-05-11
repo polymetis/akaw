@@ -83,6 +83,44 @@ defmodule Akaw.ChangesTest do
     end
   end
 
+  describe "stream_post/4" do
+    test "POSTs body with filter and forces feed=continuous" do
+      plug = fn conn ->
+        {:ok, body, _} = Plug.Conn.read_body(conn)
+        Process.put(:akaw_changes_post_method, conn.method)
+        Process.put(:akaw_changes_post_path, conn.request_path)
+        Process.put(:akaw_changes_post_qs, conn.query_string)
+        Process.put(:akaw_changes_post_body, body)
+        Req.Test.json(conn, %{})
+      end
+
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug, retry: false])
+
+      try do
+        client
+        |> Akaw.Changes.stream_post("mydb", %{doc_ids: ["a", "b"]},
+          filter: "_doc_ids",
+          since: "now"
+        )
+        |> Enum.take(1)
+      rescue
+        _ -> :ok
+      end
+
+      assert Process.get(:akaw_changes_post_method) == "POST"
+      assert Process.get(:akaw_changes_post_path) == "/mydb/_changes"
+
+      assert Jason.decode!(Process.get(:akaw_changes_post_body)) == %{
+               "doc_ids" => ["a", "b"]
+             }
+
+      qs = Process.get(:akaw_changes_post_qs) || ""
+      assert qs =~ "feed=continuous"
+      assert qs =~ "filter=_doc_ids"
+      assert qs =~ "since=now"
+    end
+  end
+
   describe "stream/3 — feed forcing" do
     # We capture the query string into the process dictionary rather than
     # sending it as a message — `next_chunk`'s `receive` eagerly drains the

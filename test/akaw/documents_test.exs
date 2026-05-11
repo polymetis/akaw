@@ -102,6 +102,51 @@ defmodule Akaw.DocumentsTest do
     end
   end
 
+  describe "stream_all_docs/3" do
+    test "→ GET /{db}/_all_docs and forwards JSON-typed params encoded" do
+      plug = fn conn ->
+        Process.put(:akaw_doc_stream_method, conn.method)
+        Process.put(:akaw_doc_stream_path, conn.request_path)
+        Process.put(:akaw_doc_stream_qs, conn.query_string)
+        Req.Test.json(conn, %{})
+      end
+
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug, retry: false])
+
+      try do
+        client |> Akaw.Documents.stream_all_docs("mydb", startkey: "u_") |> Enum.take(1)
+      rescue
+        _ -> :ok
+      end
+
+      assert Process.get(:akaw_doc_stream_method) == "GET"
+      assert Process.get(:akaw_doc_stream_path) == "/mydb/_all_docs"
+
+      qs = Process.get(:akaw_doc_stream_qs) || ""
+      decoded = URI.decode_query(qs)
+      assert decoded["startkey"] == "\"u_\""
+    end
+  end
+
+  describe "stream_design_docs/3" do
+    test "→ GET /{db}/_design_docs (streaming variant)" do
+      plug = fn conn ->
+        Process.put(:akaw_ddocs_stream_path, conn.request_path)
+        Req.Test.json(conn, %{})
+      end
+
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug, retry: false])
+
+      try do
+        client |> Akaw.Documents.stream_design_docs("mydb") |> Enum.take(1)
+      rescue
+        _ -> :ok
+      end
+
+      assert Process.get(:akaw_ddocs_stream_path) == "/mydb/_design_docs"
+    end
+  end
+
   describe "design_docs_keys/4" do
     test "POSTs {keys: [...]} body", %{client: client} do
       assert {:ok, _} =
