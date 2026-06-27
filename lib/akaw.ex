@@ -109,13 +109,13 @@ defmodule Akaw do
       | {:halt, acc}`; the function returns `{:ok, final_acc} |
       {:error, %Akaw.Error{}}`.
 
-      *Per-call Req escape hatches.* The flat `opts` keyword can
-      include any of these Req-level options inline, in addition to
-      CouchDB query params:
+      *Per-call transport escape hatches.* The flat `opts` keyword can
+      include any of these Finch/Mint options inline — Req forwards them
+      to its Finch adapter — in addition to CouchDB query params:
 
-        * `:receive_timeout` — between-chunk timeout in ms
-        * `:pool_timeout` — wait time to acquire a Finch pool worker
-        * `:connect_options` — TCP/TLS options forwarded to Mint
+        * `:receive_timeout` — Finch's between-chunk timeout in ms
+        * `:pool_timeout` — Finch wait time to acquire a pool worker
+        * `:connect_options` — TCP/TLS options Finch forwards to Mint
 
       Anything else flows through to the endpoint as a query param.
       For continuous feeds, `:receive_timeout` auto-defaults to

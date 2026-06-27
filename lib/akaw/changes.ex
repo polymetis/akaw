@@ -160,7 +160,8 @@ defmodule Akaw.Changes do
 
   `opts` is a flat keyword of CouchDB query params; you can also drop
   `:receive_timeout` / `:pool_timeout` / `:connect_options` in there
-  and they'll be routed to Req instead of becoming query params.
+  and they'll be routed to the transport (Finch/Mint, via Req) instead
+  of becoming query params.
 
   Continuous feeds can sit silent for long stretches. If you pass an
   integer `:heartbeat`, `:receive_timeout` defaults to `heartbeat * 2`

@@ -205,15 +205,17 @@ defmodule Akaw.Streaming do
 
   @type reducer_result(acc) :: {:cont, acc} | {:halt, acc}
 
-  # Req-level options that we accept as per-call escape hatches on the
+  # Transport options (Finch/Mint, which Req forwards to its Finch
+  # adapter) that we accept as per-call escape hatches on the
   # `reduce_while/N` wrappers. Anything not in this list stays in `opts`
   # and is treated as a CouchDB query param.
   @req_opt_keys [:receive_timeout, :pool_timeout, :connect_options]
 
   @doc """
   Split a `reduce_while` opts keyword into `{req_opts, couchdb_opts}`,
-  pulling out the small set of Req-level options that we allow callers
-  to override per call (everything else is destined for query params).
+  pulling out the small set of Finch/Mint transport options we let
+  callers override per call — they ride to Finch via Req's option
+  passthrough (everything else is destined for query params).
   """
   @spec split_req_opts(keyword()) :: {keyword(), keyword()}
   def split_req_opts(opts) when is_list(opts) do
