@@ -182,12 +182,14 @@ defmodule Akaw do
       `:receive_timeout`, `:pool_timeout`, `:retry` (atoms only —
       `false`, `:safe_transient`, or `:transient`; plain requests only,
       streaming and feed paths never retry), `:retry_delay`,
-      `:compressed`, `:headers`, and `:plug` (test stubbing). Anything
+      `:compressed`, and `:headers`. Anything
       else raises `ArgumentError` — this is deliberately not an
       arbitrary passthrough to the underlying HTTP client, so the
       client contract survives a transport change. Connection-level
       options (TLS for self-signed CouchDB, proxies) belong on a named
-      Finch pool passed via `:finch` — see "Connection pooling".
+      Finch pool passed via `:finch` — see "Connection pooling". For
+      test stubbing, point `:base_url` at a loopback listener serving
+      your stub — see "Testing against Akaw" in the README.
 
   ## Examples
 
@@ -242,8 +244,7 @@ defmodule Akaw do
     :retry,
     :retry_delay,
     :compressed,
-    :headers,
-    :plug
+    :headers
   ]
 
   defp validate_req_options!(req_options) when is_list(req_options) do
@@ -271,6 +272,11 @@ defmodule Akaw do
             ]
 
             Akaw.new(base_url: url, finch: MyApp.CouchPool)
+
+        If you were passing :plug (test stubbing): serve the stub from a \
+        real loopback listener and point :base_url at it — Bandit on \
+        port 0 gives each test its own URL. See "Testing against Akaw" \
+        in the README.
         """
     end
   end

@@ -1,8 +1,6 @@
 defmodule AkawTest do
   use ExUnit.Case, async: true
 
-  alias Akaw.Loopback
-
   doctest Akaw
   doctest Akaw.Error
   doctest Akaw.Params
@@ -103,8 +101,7 @@ defmodule AkawTest do
             retry: false,
             retry_delay: 10,
             compressed: false,
-            headers: [{"x-extra", "1"}],
-            plug: fn conn -> Loopback.json(conn, %{}) end
+            headers: [{"x-extra", "1"}]
           ]
         )
 
@@ -117,11 +114,26 @@ defmodule AkawTest do
                  :retry,
                  :retry_delay,
                  :compressed,
-                 :headers,
-                 :plug
+                 :headers
                ])
 
       assert Keyword.get(client.req_options, :receive_timeout) == 30_000
+    end
+
+    test "req_options rejects :plug and teaches the loopback seam" do
+      # The unit suite's own migration off req_options: [plug:] closed
+      # the contract behind it — the option existed for the old test
+      # seam and dies with it.
+      error =
+        assert_raise ArgumentError, fn ->
+          Akaw.new(
+            base_url: "http://x",
+            req_options: [plug: fn conn -> Plug.Conn.send_resp(conn, 200, "{}") end]
+          )
+        end
+
+      assert error.message =~ "loopback"
+      assert error.message =~ "Testing against Akaw"
     end
 
     test "req_options rejects a function-valued :retry" do
