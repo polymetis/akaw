@@ -176,7 +176,7 @@ defmodule Akaw.PropertiesTest do
     if size >= binary_size do
       [binary]
     else
-      <<chunk::binary-size(size), tail::binary>> = binary
+      <<chunk::binary-size(^size), tail::binary>> = binary
       [chunk | chunk_binary(tail, rest)]
     end
   end
