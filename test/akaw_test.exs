@@ -72,6 +72,19 @@ defmodule AkawTest do
       refute inspect(client) =~ "token-in-opts"
     end
 
+    test "hides credentials embedded in base_url" do
+      # Req 0.7 honours URL userinfo as Basic auth, which would otherwise make
+      # :base_url a secret — and :base_url is the one field this Inspect
+      # implementation deliberately prints. Akaw.new/1 lifts it into :auth so
+      # the redaction still holds.
+      client = Akaw.new(base_url: "http://admin:hunter2@localhost:5984")
+      dump = inspect(client)
+
+      refute dump =~ "hunter2"
+      refute dump =~ "admin"
+      assert dump =~ "http://localhost:5984"
+    end
+
     test "still shows base_url and finch for debugging" do
       client = Akaw.new(base_url: "http://localhost:5984", finch: MyApp.Finch)
       dump = inspect(client)

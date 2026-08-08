@@ -139,6 +139,12 @@ defmodule Akaw do
     * `:base_url` (required) — base URL of the CouchDB instance,
       e.g. `"http://localhost:5984"`. Trailing slash is stripped.
 
+      Credentials embedded in the URL (`"http://admin:pw@localhost:5984"`)
+      are lifted out into `:auth` as `{:basic, user, password}`, so the
+      secret ends up in the field `Akaw.Client`'s `Inspect` implementation
+      redacts rather than in the one it prints. An explicit `:auth` option
+      takes precedence.
+
     * `:auth` — authentication credentials. One of:
 
         * `nil` (default) — no auth
@@ -169,6 +175,14 @@ defmodule Akaw do
       iex> client.auth
       {:basic, "admin", "pw"}
 
+      iex> client = Akaw.new(base_url: "http://admin:pw@x:5984")
+      iex> {client.base_url, client.auth}
+      {"http://x:5984", {:basic, "admin", "pw"}}
+
+      iex> client = Akaw.new(base_url: "http://ignored:me@x", auth: {:bearer, "tok"})
+      iex> {client.base_url, client.auth}
+      {"http://x", {:bearer, "tok"}}
+
       iex> client = Akaw.new(base_url: "http://x", finch: MyApp.Finch)
       iex> client.finch
       MyApp.Finch
@@ -179,14 +193,42 @@ defmodule Akaw do
   """
   @spec new(keyword()) :: Client.t()
   def new(opts) when is_list(opts) do
-    base_url = opts |> Keyword.fetch!(:base_url) |> String.trim_trailing("/")
+    {base_url, url_auth} =
+      opts |> Keyword.fetch!(:base_url) |> String.trim_trailing("/") |> split_userinfo()
 
     %Client{
       base_url: base_url,
-      auth: Keyword.get(opts, :auth),
+      auth: Keyword.get(opts, :auth) || url_auth,
       finch: Keyword.get(opts, :finch),
       headers: Keyword.get(opts, :headers, []),
       req_options: Keyword.get(opts, :req_options, [])
     }
+  end
+
+  # Credentials embedded in the URL (`http://admin:pw@host:5984`) used to be
+  # inert — Req 0.5 dropped them and CouchDB answered 401. Req 0.7 honours
+  # them as Basic auth, which quietly turns `:base_url` into a secret. That
+  # collides with `Akaw.Client`'s Inspect derivation, which deliberately
+  # shows `:base_url` in the clear and redacts `:auth`.
+  #
+  # So Akaw lifts the credential out of the URL and into `:auth` at
+  # construction time: the secret lands in the redacted field, inspect
+  # output stops leaking it, and the behaviour is the same whichever Req
+  # version is underneath. An explicit `:auth` option still wins, matching
+  # Req's own precedence.
+  defp split_userinfo(base_url) do
+    case URI.parse(base_url) do
+      %URI{userinfo: nil} ->
+        {base_url, nil}
+
+      %URI{userinfo: userinfo} = uri ->
+        {user, pass} =
+          case String.split(userinfo, ":", parts: 2) do
+            [user, pass] -> {user, pass}
+            [user] -> {user, ""}
+          end
+
+        {URI.to_string(%{uri | userinfo: nil}), {:basic, URI.decode(user), URI.decode(pass)}}
+    end
   end
 end
