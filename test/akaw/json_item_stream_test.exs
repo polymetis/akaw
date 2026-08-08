@@ -62,9 +62,19 @@ defmodule Akaw.JsonItemStreamTest do
         ~s|{"rows":[{"id":"a"},{"id":"b"}]}|
       ]
 
-      # The header itself ends with `]}`, not `[`, so :seek_array never
-      # transitions and the stream emits nothing. That's expected behaviour
-      # for fully-minified responses (we can't usefully parse them).
+      # A 200 carrying rows must never complete as zero items. We can't
+      # usefully parse a minified response, so the promised diagnostic
+      # fires from :seek_array when rows appear inlined with the opener.
+      assert_raise Akaw.Error, ~r/stream_format_error|minifies/, fn ->
+        JsonItemStream.items(chunks) |> Enum.to_list()
+      end
+    end
+
+    test "an inline empty array is a valid empty response, not a format error" do
+      # CouchDB itself emits `{"total_rows":0,"offset":0,"rows":[]}` on
+      # one line for an empty result — zero items is the right answer.
+      chunks = [~s|{"total_rows":0,"offset":0,"rows":[]}|]
+
       assert [] = JsonItemStream.items(chunks) |> Enum.to_list()
     end
 

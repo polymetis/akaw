@@ -104,6 +104,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   query string, matching the `reduce_while` variants. An explicit
   `:receive_timeout` always wins.
 
+- **A fully minified response now raises the promised
+  `stream_format_error` instead of silently streaming zero items.** The
+  item streamer's documented defense against minifying proxies only fired
+  for garbage *inside* a row array whose opener sat on its own line. The
+  common minification case — the whole body collapsed onto one line —
+  never entered the array at all, so `stream_all_docs/3` and the
+  `reduce_while` variants completed cleanly with zero rows from a 200
+  that contained data. Rows inlined with their array opener (`[{`) now
+  raise the documented diagnostic from the seek state. A legitimately
+  empty inline array (`"rows":[]`) still streams zero items.
+
 - **Streaming requests no longer inherit Req's automatic retry.** Req's
   default `retry: :safe_transient` re-runs the whole request after a
   transient failure (a 5xx, a dropped connection, a receive timeout). On
