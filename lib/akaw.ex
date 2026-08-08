@@ -66,10 +66,11 @@ defmodule Akaw do
   ## Notes & gotchas
 
     * **JSON with duplicate keys.** CouchDB happily stores documents with
-      repeated keys (the JSON spec allows it). Akaw decodes responses through
-      Req's standard JSON layer, which collapses duplicates to the last-seen
-      value. If you need to preserve duplicates you'll need a custom decoder;
-      this isn't supported today.
+      repeated keys (the JSON spec allows it). Decoding collapses
+      duplicates to the **first**-seen value — verified against both the
+      OTP-native `JSON` module and Jason, which agree. If you need to
+      preserve duplicates you'll need a custom decoder; this isn't
+      supported today.
 
     * **Streaming.** Large responses — `_changes` with `feed=continuous`,
       `_all_docs` over giant databases, full views, large Mango finds,

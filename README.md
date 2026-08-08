@@ -160,7 +160,7 @@ CouchDB, proxies) belong on a named Finch pool as above.
 
 ## Testing against Akaw
 
-Akaw talks through Req, so `Req.Test` works without any seam of your own:
+For tests, point a client at a stub with the `:plug` option:
 
 ```elixir
 client =
@@ -170,8 +170,11 @@ client =
   )
 ```
 
-Req's `:plug` adapter needs Plug on the code path, which Akaw only pulls
-in for its own tests — add `{:plug, "~> 1.0", only: :test}` to your deps.
+(Needs `{:plug, "~> 1.0", only: :test}` in your deps.) Note this seam is
+slated to change: akaw is moving to a loopback-socket test story that
+exercises the real transport, and the `:plug` spelling will move with
+it. Prefer wrapping akaw behind your own boundary if you want your
+test seams insulated from that change.
 
 ## Development
 

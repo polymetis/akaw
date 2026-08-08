@@ -31,6 +31,25 @@ defmodule Akaw.Session do
   This module does not automatically capture rotated cookies from
   intervening responses — refresh is explicit.
 
+  ## Auth failures worth knowing about (verified against CouchDB 3.5)
+
+    * **A 401 during server boot does not mean the password is wrong.**
+      A (re)starting CouchDB answers HTTP before its admin users are
+      loaded, and rejects *correct* credentials with
+      `"Name or password is incorrect."` for a short window. Don't wire
+      page-on-401 alerts to a single failure.
+    * **Account lockout flips 401 into 403.** Five failed basic-auth
+      attempts lock the account for ~5 minutes; during the lockout even
+      the *correct* password is refused with
+      `403 "Account is temporarily locked ..."`. A credential rotation
+      that briefly runs with the old password locks the new one out too.
+    * **A bearer token is silently ignored** unless the server has a JWT
+      handler configured (the default chain is `["cookie", "default"]`) —
+      the request simply runs as anonymous and only fails later, on the
+      first privileged call, with a misleading "You are not a server
+      admin.". `info/1` is the diagnostic: `userCtx.name` comes back
+      `nil` when your token was never evaluated.
+
   See <https://docs.couchdb.org/en/latest/api/server/authn.html>.
   """
 

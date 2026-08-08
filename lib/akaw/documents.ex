@@ -119,6 +119,13 @@ defmodule Akaw.Documents do
   per-row persistence is too hot; N is then your at-least-once window
   on resume. The retry loop belongs in *your* code, wrapped around this
   function, restarting from the checkpoint.
+
+  One more calibration, from failure injection against real CouchDB:
+  `{:ok, final_acc}` means *the response body arrived intact* — for
+  bodies small enough to fit in kernel/proxy buffers, a walk can
+  complete cleanly off those buffers after the server has already died.
+  Success means the data was delivered once and whole, not that the
+  server survived your walk.
   """
   @spec reduce_while_all_docs(
           Client.t(),
