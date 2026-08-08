@@ -15,7 +15,9 @@ defmodule Akaw.Error do
     * **Transport** (DNS, connection refused, timeout, …) — `status` is
       `nil`, `error` is `"transport_error"`, `reason` is the underlying
       exception's message, `body` is `%{exception: original_exception}`
-      so you can re-examine the raw Mint/Finch error if needed.
+      so you can re-examine the source error if needed — a
+      `%Req.TransportError{}` on plain requests, the raw Finch/Mint
+      exception on streaming paths (which bypass Req's error step).
 
     * **Decode failures** — a 2xx response whose body failed JSON
       decoding (a proxy truncating responses, a misbehaving middlebox):
