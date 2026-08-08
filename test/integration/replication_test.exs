@@ -82,8 +82,8 @@ defmodule Akaw.Integration.ReplicationTest do
 
   defp build_authed_url(client, db) do
     uri = URI.parse(client.base_url)
-    user = System.get_env("AKAW_TEST_USER", "admin")
-    pass = System.get_env("AKAW_TEST_PASS", "password")
+    user = URI.encode_www_form(System.get_env("AKAW_TEST_USER", "admin"))
+    pass = URI.encode_www_form(System.get_env("AKAW_TEST_PASS", "password"))
     "#{uri.scheme}://#{user}:#{pass}@#{uri.host}:#{uri.port}/#{db}"
   end
 
@@ -91,11 +91,21 @@ defmodule Akaw.Integration.ReplicationTest do
   # how CouchDB reaches the source — but they must never come OUT in
   # test output: CI logs are often world-readable, AKAW_TEST_PASS may be
   # a real admin password there, and these diagnostics fire precisely on
-  # the flakes that get pasted into issues. Covers both the URL we print
-  # ourselves and any credential-bearing URL CouchDB embeds in its own
-  # error strings (its auth errors quote the session URL).
+  # the flakes that get pasted into issues.
+  #
+  # Two layers, because a URL-shape regex alone fails open on passwords
+  # containing '@' or whitespace: first scrub the known plaintext (this
+  # process holds the exact secret, in both raw and www-form spellings),
+  # then the //user:pass@ shape as a backstop for any credential-bearing
+  # URL CouchDB embeds in its own error strings.
   defp redact_credentials(text) do
-    String.replace(text, ~r{//([^/@:\s]+):[^@\s]+@}, "//\\1:[REDACTED]@")
+    pass = System.get_env("AKAW_TEST_PASS", "password")
+
+    [pass, URI.encode_www_form(pass)]
+    |> Enum.uniq()
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.reduce(text, &String.replace(&2, &1, "[REDACTED]"))
+    |> String.replace(~r{//([^/:\s]+):\S+@}, "//\\1:[REDACTED]@")
   end
 
   # Poll until the replicated doc shows up, giving up early if the

@@ -212,9 +212,10 @@ defmodule Akaw.Integration.ReduceWhileTest do
         end)
 
       # Sentinels prove the feed is established and receiving; we write
-      # live1/live2 only after one comes back.
-      assert :ok = write_sentinels_until_feed_open(client, db),
-             "continuous feed never reported a sentinel"
+      # live1/live2 only after one comes back. (assert/1 without a
+      # message: the match raises before assert/2's message could ever
+      # print, and the macro reports the actual right-hand value.)
+      assert :ok = write_sentinels_until_feed_open(client, db)
 
       {:ok, _} = Akaw.Document.put(client, db, "live1", %{n: 1})
       {:ok, _} = Akaw.Document.put(client, db, "live2", %{n: 2})

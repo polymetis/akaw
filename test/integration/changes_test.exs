@@ -105,8 +105,10 @@ defmodule Akaw.Integration.ChangesTest do
           |> Enum.take(2)
         end)
 
-      assert :ok = write_sentinels_until_feed_open(client, db),
-             "continuous feed never reported a sentinel"
+      # assert/1, no message argument: with `pattern = expr` the macro
+      # reports the mismatching right-hand value itself, whereas a
+      # message on assert/2 is dead code (the match raises first).
+      assert :ok = write_sentinels_until_feed_open(client, db)
 
       {:ok, _} = Akaw.Document.put(client, db, "live1", %{n: 1})
       {:ok, _} = Akaw.Document.put(client, db, "live2", %{n: 2})
