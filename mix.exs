@@ -23,7 +23,10 @@ defmodule Akaw.MixProject do
 
   defp deps do
     [
-      {:req, "~> 0.5"},
+      # 0.7 is a hard floor, not a preference: Akaw.Request translates
+      # `:finch` / `:pool_timeout` into Req 0.7's `finch: [name: …]`
+      # spelling, which raises on 0.5.
+      {:req, "~> 0.7"},
       {:plug, "~> 1.0", only: :test},
       {:stream_data, "~> 1.0", only: :test}
     ]
