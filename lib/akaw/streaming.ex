@@ -658,7 +658,9 @@ defmodule Akaw.Streaming do
 
       true ->
         truncated = binary_part(chunk, 0, remaining)
-        {:halt, %{state | error_body: [state.error_body | truncated], error_size: @max_error_body}}
+
+        {:halt,
+         %{state | error_body: [state.error_body | truncated], error_size: @max_error_body}}
     end
   end
 

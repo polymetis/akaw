@@ -96,7 +96,11 @@ defmodule Akaw.Request do
     {pool, build_options} = pool_and_build_options(client.finch)
 
     finch_request =
-      Finch.build(method, client.base_url <> path <> query_suffix(params), headers, body,
+      Finch.build(
+        method,
+        client.base_url <> path <> query_suffix(params),
+        headers,
+        body,
         build_options
       )
 

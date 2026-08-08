@@ -107,7 +107,7 @@ defmodule Akaw.Loopback do
   `:req_options`, ...).
 
   The client rides a per-test Finch pool that dies with the test. The
-  shared `Req.Finch` instance keys pools by `{scheme, host, port}` and
+  application-wide `Akaw.Finch` keys pools by `{scheme, host, port}` and
   never retires them — against a unique port per test it would
   accumulate one dead pool and one CLOSE_WAIT fd per test for the rest
   of the run, an EMFILE with a long fuse.
@@ -117,10 +117,9 @@ defmodule Akaw.Loopback do
   end
 
   @doc """
-  Send `data` as a JSON response. Matches `Req.Test.json/2`'s status
-  handling: respects a status already set with `Plug.Conn.put_status/2`,
-  defaults to 200. (Unlike its namesake it always sets the content-type,
-  clobbering any already there.)
+  Send `data` as a JSON response. Respects a status already set with
+  `Plug.Conn.put_status/2`, defaults to 200. Always sets the
+  content-type, clobbering any already there.
   """
   def json(%Plug.Conn{} = conn, data) do
     conn
@@ -131,8 +130,7 @@ defmodule Akaw.Loopback do
   @doc """
   A base URL whose connections are refused — a loopback port that was
   bound and then closed, which is what a down CouchDB looks like from
-  the client side. Replaces `Req.Test.transport_error(conn, :econnrefused)`
-  with the real thing.
+  the client side: a genuine `:econnrefused`, not a fabricated one.
 
   The OS could in principle re-issue the port to another process in the
   few milliseconds between the close and the connect, but ephemeral

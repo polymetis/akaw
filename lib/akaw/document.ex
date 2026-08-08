@@ -83,10 +83,10 @@ defmodule Akaw.Document do
           {:ok, map()} | {:error, term()}
   def delete(%Client{} = client, db, doc_id, rev, opts \\ [])
       when is_binary(db) and is_binary(doc_id) and is_binary(rev) do
-    # Keyword.put, not [rev: rev] ++ opts: Req 0.7 deduplicates params by key
-    # and keeps the LAST occurrence, so a stray `rev:` in opts would silently
-    # beat the positional argument. Under Req 0.5 the prepended one won,
-    # because CouchDB's qs_value takes the first of a duplicated key.
+    # Keyword.put, not [rev: rev] ++ opts: query params are
+    # one-value-per-key with the LAST occurrence winning (akaw's own
+    # documented encoding, in Akaw.Request), so a stray `rev:` in opts
+    # would silently beat a prepended positional argument.
     Request.request(client, :delete, path(db, doc_id), params: Keyword.put(opts, :rev, rev))
   end
 

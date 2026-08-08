@@ -9,8 +9,9 @@ whole 3.x surface — documents, attachments, views, Mango, design functions,
 partitioned databases, replication, and the cluster administration endpoints —
 and it streams large responses properly rather than materialising them.
 
-Built on [Req](https://hex.pm/packages/req) (and therefore
-[Finch](https://hex.pm/packages/finch)).
+Speaks directly through [Finch](https://hex.pm/packages/finch) with the
+OTP-native `JSON` module — between your call and the socket sit exactly
+one HTTP client and one parser.
 
 ## Installation
 

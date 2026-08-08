@@ -52,11 +52,6 @@ defmodule Akaw.MixProject do
       # that names a module declares it. Same rule for telemetry
       # (:telemetry.execute in Akaw.SessionServer).
       {:mint, "~> 1.9"},
-      # Leaving with the transport swap: req and jason are gone from
-      # akaw's code once Akaw.Request/Akaw.Streaming land on Finch, and
-      # the deps go with them in the same PR.
-      {:req, "~> 0.7"},
-      {:jason, "~> 1.4"},
       {:telemetry, "~> 1.0"},
       {:plug, "~> 1.0", only: :test},
       # The unit suite's test seam: every stub plug is served by a real
