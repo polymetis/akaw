@@ -2,8 +2,8 @@ defmodule Akaw.Find do
   @moduledoc """
   Mango query endpoints (`_find`, `_index`, `_explain`).
 
-  Mango is CouchDB's MongoDB-style declarative query language. `find/4`
-  runs a query, `create_index/4` and friends manage the indexes that back
+  Mango is CouchDB's MongoDB-style declarative query language. `find/3`
+  runs a query, `create_index/3` and friends manage the indexes that back
   Mango selectors, and `explain/3` returns the query plan.
 
   See <https://docs.couchdb.org/en/latest/api/database/find.html>.
