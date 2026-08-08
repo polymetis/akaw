@@ -78,19 +78,20 @@ defmodule Akaw.Loopback do
   Serve `plug_fun` from a fresh loopback listener; returns its base URL.
   """
   def url(plug_fun) when is_function(plug_fun, 1) do
+    # num_acceptors: a test listener serves exactly one client; the
+    # default 100 acceptors are ~300 idle processes per listener, ~400
+    # listeners per suite run.
+    bandit_options = [
+      plug: {FunPlug, plug_fun},
+      ip: {127, 0, 0, 1},
+      port: 0,
+      startup_log: false,
+      thousand_island_options: [num_acceptors: 2]
+    ]
+
     server =
       start_supervised!(
-        {
-          Bandit,
-          plug: {FunPlug, plug_fun},
-          ip: {127, 0, 0, 1},
-          port: 0,
-          startup_log: false,
-          # A test listener serves exactly one client; the default 100
-          # acceptors are ~300 idle processes per listener, ~400
-          # listeners per suite run.
-          thousand_island_options: [num_acceptors: 2]
-        },
+        {Bandit, bandit_options},
         # A test may mount several servers; the default child id (Bandit)
         # would collide on the second one.
         id: make_ref()
