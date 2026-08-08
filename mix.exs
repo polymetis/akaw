@@ -49,6 +49,12 @@ defmodule Akaw.MixProject do
       # `:finch` / `:pool_timeout` into Req 0.7's `finch: [name: …]`
       # spelling, which raises on 0.5.
       {:req, "~> 0.7"},
+      # Both already ride in transitively (jason via req, telemetry via
+      # req -> finch), but akaw's own code names their modules —
+      # Jason.DecodeError in Akaw.Request, :telemetry.execute in
+      # Akaw.SessionServer — and code that names a module declares it.
+      {:jason, "~> 1.4"},
+      {:telemetry, "~> 1.0"},
       {:plug, "~> 1.0", only: :test},
       {:stream_data, "~> 1.0", only: :test},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false}
