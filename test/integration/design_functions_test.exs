@@ -93,10 +93,11 @@ defmodule Akaw.Integration.DesignFunctionsTest do
   end
 
   describe "Akaw.DesignDoc.Rewrites.call/5" do
-    # CouchDB 3.5 disables rewrites by default for security; integration
-    # tagged tests skip on that to avoid noise. If you want to enable, set
-    # `[chttpd] enable_xframe_options = true` and the per-ddoc allowlist.
-    @tag :skip
+    # This was skipped with a claim that CouchDB 3.5 disables rewrites by
+    # default (citing a config knob that doesn't exist — the named
+    # `enable_xframe_options` governs clickjacking headers). Verified
+    # against a real CouchDB 3.5: rewrites work out of the box, and the
+    # ddoc-relative `_show/echo` target above routes exactly as written.
     test "rewrites/echoer hits _show/echo", %{client: client, db: db} do
       assert {:ok, "no_doc"} = Akaw.DesignDoc.Rewrites.call(client, db, "fns", "echoer")
     end
