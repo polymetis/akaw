@@ -115,6 +115,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   raise the documented diagnostic from the seek state. A legitimately
   empty inline array (`"rows":[]`) still streams zero items.
 
+- **A 2xx response with a corrupt JSON body is now a `"decode_error"`,
+  not a `"transport_error"`.** Req reports JSON decode failures through
+  the same error channel as network failures, and Akaw wrapped them all
+  with the tag its own docs define as "DNS, connection refused, timeout" —
+  so a caller following the documented branch-on-`body.exception` retry
+  pattern would loop forever against a permanently corrupt endpoint
+  (a proxy truncating responses, say). Non-streaming decode failures now
+  carry `error: "decode_error"` with the codec exception in
+  `body.exception`, mirroring the streaming path's existing
+  `"stream_decode_error"`.
+
 - **Streaming requests no longer inherit Req's automatic retry.** Req's
   default `retry: :safe_transient` re-runs the whole request after a
   transient failure (a 5xx, a dropped connection, a receive timeout). On

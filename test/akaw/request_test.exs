@@ -172,6 +172,24 @@ defmodule Akaw.RequestTest do
       assert is_struct(err.body.exception)
     end
 
+    test "a 200 with a corrupt JSON body is a decode_error, not a transport_error" do
+      # A proxy truncating the response mid-body. Tagging this
+      # "transport_error" sent the documented retry-on-transport pattern
+      # into a loop against a permanently corrupt endpoint.
+      plug = fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, ~s|{"total_rows": 3, "rows": [{"id|)
+      end
+
+      assert {:error, %Akaw.Error{} = err} =
+               Request.request(client_with(plug), :get, "/db/_all_docs")
+
+      assert err.status == nil
+      assert err.error == "decode_error"
+      assert %Jason.DecodeError{} = err.body.exception
+    end
+
     test "Akaw.Error.message/1 for transport errors shows 'Akaw transport_error: ...'" do
       err = %Akaw.Error{
         status: nil,
