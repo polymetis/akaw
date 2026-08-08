@@ -190,8 +190,10 @@ server =
 client = Akaw.new(base_url: "http://127.0.0.1:#{port}")
 ```
 
-(Needs `{:bandit, "~> 1.0", only: :test}` in your deps.) `port: 0` binds
-a fresh OS-assigned port per test, so `async: true` suites can't collide.
+(Needs `{:bandit, "~> 1.0", only: :test}` — and `{:plug, "~> 1.0",
+only: :test}` too, since the snippet names `Plug.Conn` directly.)
+`port: 0` binds a fresh OS-assigned port per test, so `async: true`
+suites can't collide.
 Akaw's own unit suite runs on this seam — `test/support/akaw/loopback.ex`
 in this repo is the helper form of the above, and lifting it wholesale
 is encouraged.

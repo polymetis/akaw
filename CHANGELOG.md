@@ -161,14 +161,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   listeners on OS-assigned loopback ports — pool checkout, HTTP
   framing, and sockets are the production code path in every unit test,
   where the previous seam replayed responses through an in-process
-  adapter that bypassed the transport entirely. With its last consumer
-  gone, `req_options: [plug: ...]` was removed from the allowlist;
+  adapter that bypassed the transport entirely. The old seam's
+  `req_options: [plug: ...]` spelling left the contract with it —
   passing it raises with the replacement, and the README's "Testing
   against Akaw" section carries the loopback recipe (akaw's own
-  `test/support/akaw/loopback.ex` is written to be lifted wholesale).
-  Stubbing through a real listener also changed what tests may assume:
-  stub plugs run in the listener's acceptor process, and chunked bodies
-  arrive as genuine chunk frames — assertions are content-based, never
+  `test/support/akaw/loopback.ex` is written to be lifted wholesale,
+  and diagnoses its own fixtures: a stub that crashes answers 418
+  carrying the formatted exception, so a broken stub can never satisfy
+  an assertion meant for CouchDB). Stubbing through a real listener
+  also changed what tests may assume: stub plugs run in the listener's
+  connection-handler process, and chunked bodies arrive as genuine
+  chunk frames — assertions are content-based, never
   delivery-count-based.
 
   Alongside, an integration probe pins the facts the coming transport
