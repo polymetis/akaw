@@ -110,11 +110,7 @@ defmodule Akaw.Streaming do
             {chunks, %{state | finished: finished?}}
 
           {:error, reason} ->
-            raise %Error{
-              status: nil,
-              error: "stream_transport_error",
-              reason: inspect(reason)
-            }
+            raise stream_transport_error(reason)
 
           :unknown ->
             next_chunk(state)
@@ -127,6 +123,25 @@ defmodule Akaw.Streaming do
           reason: "no data received within #{state.idle_timeout}ms"
         }
     end
+  end
+
+  # `Req.parse_message/2` hands back the raw transport exception without
+  # running Req's own error normalization, so the struct depends on the
+  # Finch version — Finch 0.23 wraps Mint's error, turning
+  # `%Mint.TransportError{reason: :closed}` into
+  # `%Finch.TransportError{reason: :closed, source: %Mint.TransportError{...}}`.
+  # `inspect/1`-ing that leaked the difference straight into the documented
+  # `:reason` string. `Exception.message/1` is stable across both ("socket
+  # closed"), and stashing the struct in `:body` matches what `Akaw.Error`'s
+  # moduledoc already promises for transport failures — and what the
+  # non-streaming path has always done.
+  defp stream_transport_error(reason) do
+    %Error{
+      status: nil,
+      error: "stream_transport_error",
+      reason: if(is_exception(reason), do: Exception.message(reason), else: inspect(reason)),
+      body: %{exception: reason}
+    }
   end
 
   defp collect_chunks(parts) do
