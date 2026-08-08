@@ -397,14 +397,24 @@ defmodule Akaw.SessionServerTest do
     assert {"cookie", "AuthSession=tok_2"} in Akaw.SessionServer.client(pid).headers
   end
 
-  test "password isn't visible in :sys.get_state output" do
+  test "neither password nor live session cookie is visible in :sys.get_state output" do
     {plug, _} = counting_session_plug()
     pid = start_server(plug, password: "super-secret-password")
 
     state = :sys.get_state(pid)
     refute Map.has_key?(state, :password)
     assert is_function(state.password_fn, 0)
-    refute inspect(state) =~ "super-secret-password"
+
+    rendered = inspect(state)
+    refute rendered =~ "super-secret-password"
+
+    # The AuthSession cookie is a live credential too. It necessarily
+    # lives in state.client.headers, but the client's derived Inspect
+    # (base_url and finch only) must keep it out of anything rendered —
+    # crash reports, Logger dumps, observer.
+    assert {"cookie", "AuthSession=tok_1"} in state.client.headers
+    refute rendered =~ "tok_1"
+    refute rendered =~ "AuthSession"
   end
 
   test "init failure prevents the server from starting" do

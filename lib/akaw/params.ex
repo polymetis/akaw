@@ -38,6 +38,20 @@ defmodule Akaw.Params do
   Like `encode_json_keys/1` but with the additional JSON-typed param set
   used by `_search` and `_nouveau` (`sort`, `ranges`, `drilldown`, `counts`,
   `group_sort`).
+
+  ## Examples
+
+      iex> Akaw.Params.encode_search_keys(counts: ["type"], limit: 5)
+      [counts: ~s|["type"]|, limit: 5]
+
+      iex> Akaw.Params.encode_search_keys(drilldown: ["type", "book"])
+      [drilldown: ~s|["type","book"]|]
+
+      iex> Akaw.Params.encode_search_keys(group_sort: ["-foo<number>"])
+      [group_sort: ~s|["-foo<number>"]|]
+
+      iex> Akaw.Params.encode_search_keys(sort: "-date<number>", startkey: "a")
+      [sort: ~s|"-date<number>"|, startkey: ~s|"a"|]
   """
   @spec encode_search_keys(keyword()) :: keyword()
   def encode_search_keys(opts) when is_list(opts) do
