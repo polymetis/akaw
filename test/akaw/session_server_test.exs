@@ -341,6 +341,48 @@ defmodule Akaw.SessionServerTest do
     assert {"cookie", "AuthSession=tok_1"} in Akaw.SessionServer.client(pid).headers
   end
 
+  test "the scheduled path absorbs a password_fn exception and retries on backoff" do
+    # The crash-loop scenario is specifically the *scheduled* refresh
+    # (handle_info) — pin that path end to end: the exception is absorbed,
+    # the :error telemetry fires, and the backoff timer brings the next
+    # attempt, which succeeds and rotates the cookie.
+    test = self()
+    handler_id = "akaw-test-recover-#{System.unique_integer([:positive])}"
+
+    :telemetry.attach(
+      handler_id,
+      [:akaw, :session_server, :refresh, :error],
+      fn _event, _measurements, metadata, _config ->
+        send(test, {:telemetry_err, metadata.error})
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    calls = :counters.new(1, [])
+    {plug, _} = announcing_session_plug(test)
+
+    pid =
+      start_server(plug,
+        refresh_interval: 50,
+        password: fn ->
+          :counters.add(calls, 1, 1)
+          # Call 1: init. Call 2: first scheduled refresh — Vault blips.
+          # Call 3+: recovered.
+          if :counters.get(calls, 1) == 2, do: raise("vault blip"), else: "pw"
+        end
+      )
+
+    # Init logged in (plug call 1); the first scheduled refresh raised
+    # before reaching the plug and was absorbed...
+    assert_receive {:telemetry_err, %Akaw.Error{error: "refresh_exception"}}, 1_000
+    # ...and the backoff timer brought a successful retry (plug call 2).
+    assert_receive {:session_refresh, 2}, 1_000
+
+    assert {"cookie", "AuthSession=tok_2"} in Akaw.SessionServer.client(pid).headers
+  end
+
   test "password isn't visible in :sys.get_state output" do
     {plug, _} = counting_session_plug()
     pid = start_server(plug, password: "super-secret-password")
