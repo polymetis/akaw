@@ -133,6 +133,18 @@ defmodule Akaw.View do
   stop early (the connection is closed). Returns `{:ok, final_acc}` on
   success, `{:error, %Akaw.Error{}}` on HTTP or transport failure.
 
+  ## Interrupted walks: resume, don't retry
+
+  A mid-stream failure discards the partial accumulator and is never
+  retried automatically (`retry:` raises `ArgumentError`) — a
+  transparent retry would restart a larger-than-RAM view walk from row
+  zero with side effects re-run. View keys are not unique, so to
+  checkpoint record the last `"key"` *and* `"id"` from inside your
+  reducer into storage you own (not the accumulator — it does not
+  survive an error), and resume with
+  `startkey: last_key, startkey_docid: last_id, skip: 1`. The retry
+  loop belongs in your code, restarting from the checkpoint.
+
   ## Example
 
       Akaw.View.reduce_while(client, "events", "by_user", "recent", 0,

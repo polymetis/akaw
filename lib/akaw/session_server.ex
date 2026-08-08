@@ -53,7 +53,13 @@ defmodule Akaw.SessionServer do
   If the initial login fails, the GenServer crashes — the supervisor
   decides whether to retry. A 200 that grants no `AuthSession` cookie
   counts as failure: this server exists to hold a cookie, so it refuses
-  to start without one. If a *refresh* fails after a successful
+  to start without one. Two CouchDB behaviors to keep in mind here
+  (both verified live): a *booting* CouchDB rejects correct credentials
+  with a 401 for a short window, so a refresh failing once during a
+  server restart is expected and self-heals on the next tick; and a
+  genuinely wrong password burns one of CouchDB's five
+  failures-before-lockout per supervisor restart — after which even the
+  corrected password is refused with 403 for ~5 minutes. If a *refresh* fails after a successful
   initial login, the existing client stays in place and we retry on a
   short backoff (60s or the configured interval, whichever is smaller).
   Callers continue to see the most recent good client.

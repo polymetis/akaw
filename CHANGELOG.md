@@ -97,6 +97,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the initial login grants no cookie. `create/3`'s documented fallback is
   unchanged.
 
+- **Streaming and feed requests never retry — the opt-in is gone.**
+  A per-call `retry:` now raises `ArgumentError` on every streaming
+  entry point and on the feed-capable endpoints in *every* feed mode
+  (`feed: "normal"` included — those endpoints take retry policy only
+  at the client level), and a client-level
+  `req_options: [retry: ...]` is overridden on streaming and held-open
+  paths (previously it was silently inherited — the person configuring
+  the client is not necessarily the person streaming through it). The
+  design rationale is liveness at scale: streaming exists for datasets
+  larger than RAM, and a transparent retry restarts the walk from row
+  zero with the accumulator reset and side effects re-run — when walk
+  duration approaches connection MTBF, restart-from-zero may never
+  complete while checkpoint-resume always can. Every `reduce_while`
+  doc now carries an "Interrupted walks: resume, don't retry" section
+  with the per-endpoint checkpoint recipe (`startkey`/`skip` for
+  `_all_docs`, `startkey`+`startkey_docid` for views, `since:` for
+  `_changes`, `limit`+`bookmark` paging for Mango). Held-open feed
+  requests (longpoll included) pin retry off for the additional,
+  measured reason that retrying a client-side-timed-out longpoll is
+  guaranteed to fail again while abandoning server-side connections.
+  Plain non-streaming requests keep Req's default retry.
+
+- **`:req_options` is now a narrow, named allowlist** —
+  `:receive_timeout`, `:pool_timeout`, `:retry`/`:retry_delay` (plain
+  requests only), `:compressed`, `:headers`, `:plug` — and anything else
+  raises `ArgumentError` at `Akaw.new/1`. The open passthrough welded
+  akaw's public contract to the underlying HTTP client's option surface
+  (and let secrets ride in unredactable positions); the named set
+  survives a transport change. `:connect_options` is removed with it:
+  connection-level options (TLS for self-signed CouchDB, proxies) are
+  configured on a named Finch pool passed via `:finch` — the error
+  message and docs carry the copy-pasteable supervision snippet.
+
 ### Fixed
 
 - **Four documented JSON-typed query params are now actually
@@ -145,9 +178,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Akaw.Server.db_updates/2`/`stream_db_updates/2`, and the
   `reduce_while` continuous wrappers (which previously only derived from
   `:heartbeat`). The non-reduce entry points also now route
-  `:receive_timeout` / `:pool_timeout` / `:connect_options` to the
-  transport instead of the query string. An explicit `:receive_timeout`
-  always wins — per call or per client `req_options`.
+  `:receive_timeout` / `:pool_timeout` to the transport instead of the
+  query string. An explicit `:receive_timeout` always wins — per call
+  or per client `req_options`.
 
   Note on `_db_updates`: CouchDB's documentation describes its
   `:timeout` in seconds, but the implementation (verified empirically
@@ -186,10 +219,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   million rows silently re-ran the reducer from row one with the
   accumulator wiped, and a node restart mid-`_changes` re-delivered
   already-processed changes. Streaming requests now pin `retry: false`;
-  `{:ok, final_acc}` means every row was delivered exactly once. An
-  explicit `:retry` (per call or per client `req_options`) is respected
-  for reducers that prefer restart-from-scratch over failing.
-  Non-streaming requests keep Req's default retry.
+  `{:ok, final_acc}` means every row was delivered exactly once. (The
+  per-call/per-client opt-in that originally shipped with this fix was
+  removed later in this same release — see "Streaming and feed requests
+  never retry" above.) Plain non-streaming requests keep Req's default
+  retry, tunable at the client level.
 
 - **A `password_fn` that raises or exits during a scheduled refresh no
   longer crash-loops `Akaw.SessionServer`.** The `:password` option is

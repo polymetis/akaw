@@ -102,6 +102,30 @@ defmodule Akaw.Documents do
 
   The reducer returns `{:cont, acc}` to continue or `{:halt, acc}` to
   stop early. Returns `{:ok, final_acc}` or `{:error, %Akaw.Error{}}`.
+
+  ## Interrupted walks: resume, don't retry
+
+  A mid-stream failure returns `{:error, %Akaw.Error{}}` and the partial
+  accumulator is **discarded** — no automatic retry is attempted, ever,
+  and passing `retry:` raises `ArgumentError`. Retrying a
+  larger-than-RAM walk restarts it from row zero with your side effects
+  re-run and your accumulator gone — at that scale, retry isn't
+  resilience, it's starting over without being told.
+
+  To make a long walk resumable, record the last `"id"` processed from
+  *inside* your reducer into storage you own (your process, ETS, a
+  database — not the accumulator, which does not survive an error), and
+  resume with `startkey: last_id, skip: 1`. Checkpoint every N rows if
+  per-row persistence is too hot; N is then your at-least-once window
+  on resume. The retry loop belongs in *your* code, wrapped around this
+  function, restarting from the checkpoint.
+
+  One more calibration, from failure injection against real CouchDB:
+  `{:ok, final_acc}` means *the response body arrived intact* — for
+  bodies small enough to fit in kernel/proxy buffers, a walk can
+  complete cleanly off those buffers after the server has already died.
+  Success means the data was delivered once and whole, not that the
+  server survived your walk.
   """
   @spec reduce_while_all_docs(
           Client.t(),

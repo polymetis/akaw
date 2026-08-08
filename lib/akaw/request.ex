@@ -1,7 +1,7 @@
 defmodule Akaw.Request do
   @moduledoc false
 
-  alias Akaw.{Client, Error}
+  alias Akaw.{Client, Error, Response}
 
   # Standard HTTP method atoms accepted by Finch, plus a binary escape hatch
   # for non-standard verbs like "COPY" (CouchDB document copy).
@@ -15,9 +15,9 @@ defmodule Akaw.Request do
   ## Internal options
 
     * `:return` — `:body` (default) returns `{:ok, decoded_body}`;
-      `:response` returns `{:ok, %Req.Response{}}` so callers can inspect
+      `:response` returns `{:ok, %Akaw.Response{}}` so callers can inspect
       headers and status (used by `Akaw.Session` to capture the `AuthSession`
-      cookie).
+      cookie and `Akaw.Attachment` for content-type/ETag).
 
   Headers from `client.headers`, `client.req_options[:headers]`, and per-call
   `opts[:headers]` are concatenated in that order. If the same header name
@@ -27,7 +27,7 @@ defmodule Akaw.Request do
   Any other options are forwarded to `Req.new/1`.
   """
   @spec request(Client.t(), method(), String.t(), keyword()) ::
-          {:ok, term()} | {:ok, Req.Response.t()} | {:error, Error.t() | Exception.t()}
+          {:ok, term()} | {:ok, Response.t()} | {:error, Error.t() | Exception.t()}
   def request(%Client{} = client, method, path, opts \\ []) do
     {return_kind, opts} = Keyword.pop(opts, :return, :body)
 
@@ -89,12 +89,13 @@ defmodule Akaw.Request do
   # per-request cost for anyone using a named pool.
   #
   # akaw keeps its friendly flat public API (`Akaw.new(finch: MyApp.Finch)`,
-  # `pool_timeout: 5_000`) and translates here instead. This runs last, after
-  # the req_options and per-call merges, so it also catches a `:finch` a
-  # caller set directly through `:req_options`.
+  # `pool_timeout: 5_000`) and translates here instead. It runs last,
+  # after the req_options and per-call merges, so the folded result is
+  # what actually reaches Req. (`req_options: [finch: ...]` itself now
+  # raises at Akaw.new/1 — the allowlist closed that spelling.)
   #
-  # `:receive_timeout` and `:connect_options` are NOT deprecated and stay
-  # flat — don't "helpfully" fold those in too.
+  # `:receive_timeout` is NOT deprecated and stays flat — don't
+  # "helpfully" fold it in too.
   defp normalize_finch(opts) do
     opts
     |> normalize_finch_name()
@@ -109,19 +110,14 @@ defmodule Akaw.Request do
     end
   end
 
-  # `:pool_timeout` belongs inside `finch: [...]` now — except alongside
-  # `:connect_options`, where Req raises if `:finch` is present at all
-  # (`finch.ex`: "cannot set both :finch and :connect_options"). There we
-  # leave it flat and let Req's deprecation warning stand, rather than
-  # turning a warning into a crash.
+  # `:pool_timeout` belongs inside `finch: [...]` now. (The old
+  # leave-it-flat-alongside-:connect_options corner is gone with
+  # :connect_options itself — connection options live on a named Finch
+  # pool since the Phase 0 contract narrowing.)
   defp fold_finch_request_opts(opts) do
-    if Keyword.has_key?(opts, :connect_options) do
-      opts
-    else
-      case Keyword.split(opts, [:pool_timeout]) do
-        {[], _} -> opts
-        {flat, rest} -> Keyword.update(rest, :finch, flat, &Keyword.merge(&1, flat))
-      end
+    case Keyword.split(opts, [:pool_timeout]) do
+      {[], _} -> opts
+      {flat, rest} -> Keyword.update(rest, :finch, flat, &Keyword.merge(&1, flat))
     end
   end
 
@@ -186,7 +182,7 @@ defmodule Akaw.Request do
        when status in 200..299 do
     case return_kind do
       :body -> {:ok, resp.body}
-      :response -> {:ok, resp}
+      :response -> {:ok, to_akaw_response(resp)}
     end
   end
 
@@ -195,6 +191,15 @@ defmodule Akaw.Request do
 
   defp handle_response({:error, exception}, _return_kind),
     do: {:error, classify_error(exception)}
+
+  # The one place a transport response crosses to the ENDPOINT modules:
+  # every `return: :response` consumer sees %Akaw.Response{}. (The other
+  # crossing is request_raw/4, whose %Req.Response{} feeds only
+  # Akaw.Streaming — the module the transport swap rewrites wholesale.)
+  defp to_akaw_response(%Req.Response{status: status, headers: headers, body: body}) do
+    flat = for {name, values} <- headers, value <- values, do: {name, value}
+    %Response{status: status, headers: flat, body: body}
+  end
 
   # Req's decode_body step returns codec exceptions through the same
   # {:error, exception} channel as transport failures. A 200 whose body

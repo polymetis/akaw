@@ -143,24 +143,6 @@ defmodule Akaw.RequestTest do
       refute stderr =~ "deprecated"
     end
 
-    test ":pool_timeout stays flat alongside :connect_options, where Req would raise" do
-      # Req raises "cannot set both :finch and :connect_options" if :finch is
-      # present at all, so folding here would turn a warning into a crash.
-      # We keep the warning instead. Documented, deliberate corner.
-      plug = fn conn -> Req.Test.json(conn, %{}) end
-
-      stderr =
-        ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          assert {:ok, _} =
-                   Request.request(client_with(plug), :get, "/",
-                     connect_options: [timeout: 1_000],
-                     pool_timeout: 5_000
-                   )
-        end)
-
-      assert stderr =~ "pool_timeout" and stderr =~ "deprecated"
-    end
-
     @tag :capture_log
     test "non-streaming requests keep Req's default retry" do
       # The streaming paths pin retry: false (delivery-once); complete

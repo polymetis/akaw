@@ -55,6 +55,48 @@ defmodule Akaw.ChangesTest do
       assert decoded["filter"] == "_doc_ids"
     end
 
+    test "held-open feeds never retry — even with a client-level opt-in" do
+      # The chaos run reproduced the CHANGELOG's ~67s anti-pattern in
+      # miniature: an explicit 2s receive_timeout on a quiet longpoll
+      # took 14.7s because Req retried a request that is guaranteed to
+      # time out again, abandoning four server-side connections. Feed
+      # requests pin retry off unconditionally.
+      calls = :counters.new(1, [])
+
+      plug = fn conn ->
+        :counters.add(calls, 1, 1)
+        Plug.Conn.send_resp(conn, 503, "unavailable")
+      end
+
+      client =
+        Akaw.new(
+          base_url: "http://x",
+          req_options: [plug: plug, retry: :safe_transient, retry_delay: fn _ -> 0 end]
+        )
+
+      assert {:error, %Akaw.Error{status: 503}} =
+               Akaw.Changes.get(client, "mydb", feed: "longpoll")
+
+      assert :counters.get(calls, 1) == 1
+    end
+
+    test "a per-call retry: on a feed request raises — every feed mode", %{client: client} do
+      assert_raise ArgumentError, ~r/no per-call :retry/, fn ->
+        Akaw.Changes.get(client, "mydb", feed: "longpoll", retry: false)
+      end
+
+      # The default "normal" feed raises too: the feed endpoints take no
+      # per-call retry policy at all (client-level only for plain
+      # requests), and the message says so rather than misdescribing a
+      # plain request as a streaming walk.
+      error =
+        assert_raise ArgumentError, fn ->
+          Akaw.Changes.get(client, "mydb", retry: false)
+        end
+
+      assert error.message =~ "client level"
+    end
+
     test "routes transport opts to the transport, not the query string", %{client: client} do
       assert {:ok, _} =
                Akaw.Changes.get(client, "mydb",

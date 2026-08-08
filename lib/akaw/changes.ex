@@ -63,9 +63,13 @@ defmodule Akaw.Changes do
   an integer `:heartbeat`, 120s for a server-picked one
   (`heartbeat: true`), otherwise `:timeout` plus slack.
 
-  `:receive_timeout` / `:pool_timeout` / `:connect_options` / `:retry`
-  in `opts` route to the transport rather than the query string; an
-  explicit `:receive_timeout` always wins.
+  `:receive_timeout` / `:pool_timeout` in `opts` route to the
+  transport rather than the query string; an explicit
+  `:receive_timeout` always wins. The feed endpoints take no per-call
+  `retry:` — it raises for every feed mode: held-open feeds never retry
+  at all (retrying a longpoll that timed out client-side is guaranteed
+  to time out again while abandoning server-side connections), and
+  normal-feed requests take retry policy at the client level.
   """
   @spec get(Client.t(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def get(%Client{} = client, db, opts \\ []) when is_binary(db) do
@@ -203,7 +207,7 @@ defmodule Akaw.Changes do
   ## Idle timeout
 
   `opts` is a flat keyword of CouchDB query params; you can also drop
-  `:receive_timeout` / `:pool_timeout` / `:connect_options` in there
+  `:receive_timeout` / `:pool_timeout` in there
   and they'll be routed to the transport (Finch/Mint, via Req) instead
   of becoming query params.
 
@@ -219,16 +223,22 @@ defmodule Akaw.Changes do
         fn _, n -> {:cont, n + 1} end,
         since: "now", heartbeat: 30_000)
 
-  ## Retry
+  ## Interrupted feeds: resume, don't retry
 
-  Req's automatic retry is disabled on streaming paths: a mid-feed
-  transport failure surfaces as `{:error, %Akaw.Error{}}` rather than
-  transparently re-running the request — which would reset the
-  accumulator and feed every change to the reducer again. If your
-  reducer is idempotent and you'd rather have the restart, opt back in
-  per call (`retry: :safe_transient` in `opts`, routed to the transport
-  like `:receive_timeout`) or per client
-  (`Akaw.new(req_options: [retry: :safe_transient])`).
+  A mid-feed failure returns `{:error, %Akaw.Error{}}` and the partial
+  accumulator is **discarded** — no automatic retry is attempted, ever,
+  and passing `retry:` raises `ArgumentError`. This is deliberate:
+  transparently re-running the feed would restart from the original
+  `:since` with a fresh accumulator, re-invoking your reducer (and its
+  side effects) for every change it had already delivered.
+
+  To make a long-lived feed resumable, record the last `"seq"` you
+  processed from *inside* your reducer into storage you own — your
+  process state, ETS, a database. Not the accumulator: the accumulator
+  does not survive an error. Resume with `since: last_seq`. Sequence
+  resumption is at-least-once, so make side effects idempotent. Put the
+  reconnect loop in *your* code, wrapped around this function — yours
+  is the only code that knows what "where I left off" means.
   """
   @spec reduce_while(
           Client.t(),

@@ -41,9 +41,9 @@ defmodule Akaw.ReduceWhileTest do
     end
   end
 
-  # No `retry: false` here — streaming paths default retry off themselves
-  # (see "Retry: off by default" in Akaw.Streaming). This helper carrying
-  # no opt-out is part of the proof.
+  # No `retry: false` here — streaming paths pin retry off themselves,
+  # unconditionally (see "Retry: off, unconditionally" in Akaw.Streaming).
+  # This helper carrying no opt-out is part of the proof.
   defp client_with(plug) do
     Akaw.new(base_url: "http://x", req_options: [plug: plug])
   end
@@ -589,19 +589,17 @@ defmodule Akaw.ReduceWhileTest do
     # reduce_while wrapper.
     defp bare_client, do: Akaw.new(base_url: "http://x")
 
-    test "split_req_opts/1 pulls out :receive_timeout, :pool_timeout, :connect_options" do
+    test "split_req_opts/1 pulls out :receive_timeout and :pool_timeout" do
       {req, rest} =
         Akaw.Streaming.split_req_opts(
           receive_timeout: 1_000,
           pool_timeout: 500,
-          connect_options: [protocols: [:http1]],
           since: "now",
           heartbeat: 30_000
         )
 
       assert Keyword.get(req, :receive_timeout) == 1_000
       assert Keyword.get(req, :pool_timeout) == 500
-      assert Keyword.get(req, :connect_options) == [protocols: [:http1]]
       assert Keyword.get(rest, :since) == "now"
       assert Keyword.get(rest, :heartbeat) == 30_000
       refute Keyword.has_key?(rest, :receive_timeout)
@@ -887,7 +885,8 @@ defmodule Akaw.ReduceWhileTest do
     # after a transient failure — which, on a streaming path, resets the
     # private accumulator and feeds every row to the reducer a second
     # time. {:ok, final_acc} must mean "each row delivered once", so the
-    # streaming paths pin retry: false unless someone explicitly opts in.
+    # streaming paths pin retry: false unconditionally — there is no
+    # opt-in at any layer (per-call raises; client-level is overridden).
     defp flaky_once_plug(calls) do
       rows_plug = pretty_plug([%{"id" => "a"}])
 
@@ -928,53 +927,38 @@ defmodule Akaw.ReduceWhileTest do
                client
                |> Akaw.Documents.stream_all_docs("db",
                  limit: 10,
-                 retry: false,
                  receive_timeout: 90_000
                )
                |> Enum.to_list()
 
       qs = Process.get(:akaw_row_stream_qs) || ""
       assert qs =~ "limit=10"
-      refute qs =~ "retry"
       refute qs =~ "receive_timeout"
     end
 
-    @tag :capture_log
-    test "a per-call retry opt-in routes to the transport and is respected" do
-      # The whole opt-in has to survive two hazards: :retry must be
-      # routed out of the CouchDB params (or it becomes ?retry=... and
-      # CouchDB ignores it), and default_retry_off/2 must see it and
-      # stand down. Getting either wrong silently inverts the caller's
-      # intent.
-      test = self()
-      calls = :counters.new(1, [])
-      inner = flaky_once_plug(calls)
+    test "a per-call retry: raises ArgumentError pointing at the resume docs" do
+      # There is no retry opt-in on streaming paths, at any layer. A
+      # transparent retry restarts a larger-than-RAM walk from row zero
+      # with the accumulator reset — the caller needs checkpoint-resume
+      # (startkey/since), which only their code can implement. Silently
+      # ignoring the option would be worse than honoring it; raise loudly.
+      client = Akaw.new(base_url: "http://x", req_options: [plug: pretty_plug([])])
 
-      plug = fn conn ->
-        send(test, {:qs, conn.query_string})
-        inner.(conn)
+      assert_raise ArgumentError, ~r/never retry(.|\n)*resume/, fn ->
+        Akaw.Documents.reduce_while_all_docs(
+          client,
+          "db",
+          [],
+          fn row, acc -> {:cont, [row | acc]} end,
+          retry: :safe_transient
+        )
       end
-
-      client =
-        Akaw.new(base_url: "http://x", req_options: [plug: plug, retry_delay: fn _ -> 0 end])
-
-      assert {:ok, [%{"id" => "a"}]} =
-               Akaw.Documents.reduce_while_all_docs(
-                 client,
-                 "db",
-                 [],
-                 fn row, acc -> {:cont, [row | acc]} end,
-                 retry: :safe_transient
-               )
-
-      assert :counters.get(calls, 1) == 2
-      assert_receive {:qs, qs}
-      refute qs =~ "retry"
     end
 
-    test "an explicit client-level retry opt-in is respected" do
-      # Opting in means opting into re-delivery — but it must remain
-      # possible for idempotent reducers that prefer the restart.
+    test "a client-level retry opt-in is overridden on streaming paths" do
+      # The person who configured retry: :safe_transient on the client
+      # for their doc CRUD is not necessarily the person streaming
+      # through it — re-delivery semantics must not be inherited.
       calls = :counters.new(1, [])
 
       client =
@@ -987,12 +971,12 @@ defmodule Akaw.ReduceWhileTest do
           ]
         )
 
-      assert {:ok, [%{"id" => "a"}]} =
+      assert {:error, %Akaw.Error{status: 503}} =
                Akaw.Documents.reduce_while_all_docs(client, "db", [], fn row, acc ->
                  {:cont, [row | acc]}
                end)
 
-      assert :counters.get(calls, 1) == 2
+      assert :counters.get(calls, 1) == 1
     end
 
     test "reduce paths tag transport failures stream_transport_error" do
@@ -1021,6 +1005,29 @@ defmodule Akaw.ReduceWhileTest do
         end
 
       assert error.error == "stream_transport_error"
+    end
+
+    test "the lazy chunks path overrides a client-level retry opt-in too" do
+      # pin_retry_off has three call sites; open/4 behind the lazy
+      # streams is the one a green suite could silently lose — this
+      # fails if it does.
+      calls = :counters.new(1, [])
+
+      client =
+        Akaw.new(
+          base_url: "http://x",
+          req_options: [
+            plug: flaky_once_plug(calls),
+            retry: :safe_transient,
+            retry_delay: fn _ -> 0 end
+          ]
+        )
+
+      assert_raise Akaw.Error, ~r/503/, fn ->
+        client |> Akaw.Documents.stream_all_docs("db") |> Enum.to_list()
+      end
+
+      assert :counters.get(calls, 1) == 1
     end
 
     test "the lazy chunks path is not retried either" do

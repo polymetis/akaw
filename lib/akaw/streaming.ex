@@ -18,19 +18,30 @@ defmodule Akaw.Streaming do
   #     calling process and (b) blocking in the reducer stalls socket
   #     reads and applies real TCP backpressure to CouchDB.
   #
-  # ## Retry: off by default, both flavors
+  # ## Retry: off, unconditionally — resume is the caller's job
   #
-  # Req's default `retry: :safe_transient` re-runs the whole request after
-  # a transient failure. For a complete-response request that's a
-  # convenience; for a streaming request it's a correctness bug: with
-  # `into:` collectors the body consumed before the failure has already
-  # been fed to the caller (or their mailbox), and the retried attempt
-  # builds a fresh `%Req.Response{}` — the private accumulator resets to
-  # `init_acc` and every row is delivered again. `{:ok, final_acc}` must
-  # mean "each item was delivered exactly once", so streaming requests
-  # default `retry: false`. An explicit `:retry` (per call, or per client
-  # via `req_options`) is respected — opting in means opting into
-  # re-delivery.
+  # Streaming and held-open requests NEVER retry, and there is no opt-in
+  # at any layer (a per-call `retry:` raises; a client-level
+  # `req_options[:retry]` is overridden). Two reasons, both from the
+  # design record:
+  #
+  # 1. Correctness: with `into:` collectors the body consumed before a
+  #    failure has already been fed to the caller, and a retried attempt
+  #    builds a fresh `%Req.Response{}` — accumulator reset, every row
+  #    re-delivered. `{:ok, final_acc}` must mean delivered-once.
+  # 2. Liveness at scale: streaming exists for datasets larger than RAM.
+  #    Restart-from-row-zero on a walk whose duration approaches the
+  #    connection's MTBF has completion probability trending to zero;
+  #    checkpoint-resume (startkey/startkey_docid/since — caller-owned)
+  #    trends to one. Transparent retry is an anti-resume that also
+  #    hides that it ran.
+  #
+  # The client-level override matters: whoever set retry: :safe_transient
+  # on the client for their doc CRUD is not necessarily the person
+  # calling reduce_while through it. Held-open feed requests (longpoll
+  # included, non-streaming) pin retry off for the additional reason
+  # that retrying a client-side-timed-out longpoll is guaranteed to time
+  # out again while abandoning server-side connections.
   #
   # ## chunks/4 — idle timeout
   #
@@ -107,7 +118,7 @@ defmodule Akaw.Streaming do
     opts =
       opts
       |> Keyword.put(:into, :self)
-      |> default_retry_off(client)
+      |> pin_retry_off()
 
     case Request.request_raw(client, method, path, opts) do
       {:ok, %Req.Response{status: status} = resp} when status in 200..299 ->
@@ -244,11 +255,11 @@ defmodule Akaw.Streaming do
 
   # Transport-level options that we accept as per-call escape hatches on
   # the `reduce_while/N` wrappers. Anything not in this list stays in
-  # `opts` and is treated as a CouchDB query param. `:retry` is here so
-  # the documented per-call retry opt-in actually routes to Req instead
-  # of leaking into the query string and then being pinned off by
-  # `default_retry_off/2` — the exact inversion of the caller's intent.
-  @req_opt_keys [:receive_timeout, :pool_timeout, :connect_options, :retry]
+  # `opts` and is treated as a CouchDB query param. `:retry` is
+  # deliberately NOT here: streaming/feed requests never retry (see the
+  # module comment), and `split_req_opts/1` rejects it loudly rather
+  # than letting it leak into the query string.
+  @req_opt_keys [:receive_timeout, :pool_timeout]
 
   @doc """
   Split a flat opts keyword into `{req_opts, couchdb_opts}`, pulling out
@@ -257,14 +268,52 @@ defmodule Akaw.Streaming do
   streaming entry point — reduce wrappers, lazy streams, and the
   feed-mode endpoints via `held_open_feed_opts/2`.
 
-  `:receive_timeout`, `:connect_options`, and `:retry` ride to Req
-  through its option passthrough. `:pool_timeout` is folded into
-  Req 0.7's `finch: [...]` keyword by `Akaw.Request`, which keeps the
-  flat spelling here warning-free.
+  `:receive_timeout` rides to Req through its option passthrough.
+  `:pool_timeout` is folded into Req 0.7's `finch: [...]` keyword by
+  `Akaw.Request`, which keeps the flat spelling here warning-free.
+  Connection-level options (TLS, proxy) are not per-call — configure a
+  named Finch pool and pass it via `Akaw.new(finch: ...)`.
   """
   @spec split_req_opts(keyword()) :: {keyword(), keyword()}
   def split_req_opts(opts) when is_list(opts) do
+    reject_retry!(opts)
+    reject_connect_options!(opts)
     Keyword.split(opts, @req_opt_keys)
+  end
+
+  # Same posture as Akaw.Changes' reject_feed_override!/1: a loud,
+  # immediate ArgumentError beats a silently ignored (or worse,
+  # query-param-leaked) option. Fires for every feed mode on the
+  # feed-capable endpoints, "normal" included — these endpoints take no
+  # per-call retry policy at all.
+  defp reject_retry!(opts) do
+    if Keyword.has_key?(opts, :retry) do
+      raise ArgumentError,
+            "the streaming and feed endpoints take no per-call :retry. " <>
+              "Streaming and held-open requests never retry — a transparent " <>
+              "retry restarts the walk from row zero with the accumulator " <>
+              "reset and every side effect re-run, which at larger-than-RAM " <>
+              "scale is a walk that may never complete; resume from a " <>
+              "checkpoint you own instead (see \"Interrupted walks: resume, " <>
+              "don't retry\" in the reduce_while docs). Plain normal-feed " <>
+              "requests take retry policy at the client level: " <>
+              "Akaw.new(req_options: [retry: ...])."
+    end
+  end
+
+  # :connect_options left the per-call surface in the Phase 0 contract
+  # narrowing. Same loud-beats-leaked posture: without this it would
+  # fall into the CouchDB params bucket and die inside URI encoding
+  # with an error pointing away from the cause.
+  defp reject_connect_options!(opts) do
+    if Keyword.has_key?(opts, :connect_options) do
+      raise ArgumentError,
+            "per-call :connect_options was removed — connection-level " <>
+              "options (TLS for self-signed CouchDB, proxies) are configured " <>
+              "on a named Finch pool: {Finch, name: MyApp.CouchPool, pools: " <>
+              "%{default: [conn_opts: [transport_opts: [...]]]}} and " <>
+              "Akaw.new(base_url: url, finch: MyApp.CouchPool)."
+    end
   end
 
   # If the user lets CouchDB pick the heartbeat (heartbeat: true /
@@ -299,7 +348,8 @@ defmodule Akaw.Streaming do
   The per-call opts merge after the client's `req_options` in
   `Akaw.Request.build/4`, so putting a derived value into per-call opts
   would silently override a client-level setting; hence the check on
-  both layers, same as `default_retry_off/2`.
+  both layers. (Retry takes the opposite stance on purpose: `pin_retry_off/1`
+  overrides both layers unconditionally — see the module comment.)
   """
   @spec default_receive_timeout(Client.t(), keyword(), keyword()) :: keyword()
   def default_receive_timeout(%Client{} = client, req_opts, couchdb_opts) do
@@ -377,7 +427,17 @@ defmodule Akaw.Streaming do
     {req_opts, params} = split_req_opts(opts)
 
     if to_string(Keyword.get(params, :feed, "normal")) in @held_open_feeds do
-      {default_receive_timeout(client, req_opts, params), params}
+      # Held-open feeds also pin retry off (client-level opt-ins
+      # included): a longpoll that timed out client-side is guaranteed
+      # to time out again on retry, while abandoning a server-side
+      # connection per attempt — measured live as an explicit 2s
+      # deadline stretching to 14.7s across four abandoned connections.
+      req_opts =
+        client
+        |> default_receive_timeout(req_opts, params)
+        |> pin_retry_off()
+
+      {req_opts, params}
     else
       {req_opts, params}
     end
@@ -554,7 +614,7 @@ defmodule Akaw.Streaming do
     opts =
       opts
       |> Keyword.put(:into, collector)
-      |> default_retry_off(client)
+      |> pin_retry_off()
 
     case Request.request_raw(client, method, path, opts) do
       {:ok, %Req.Response{} = resp} -> {:ok, resp}
@@ -562,17 +622,12 @@ defmodule Akaw.Streaming do
     end
   end
 
-  # See "Retry: off by default" in the module comment. The per-call opts
-  # merge after the client's req_options in Request.build/4, so a bare
-  # `Keyword.put` here would override a client-level opt-in — hence the
-  # explicit has_key? checks on both layers.
-  defp default_retry_off(opts, %Client{req_options: req_options}) do
-    if Keyword.has_key?(opts, :retry) or Keyword.has_key?(req_options, :retry) do
-      opts
-    else
-      Keyword.put(opts, :retry, false)
-    end
-  end
+  # See "Retry: off, unconditionally" in the module comment. Per-call
+  # opts merge after the client's req_options in Request.build/4, so
+  # this unconditional put also overrides a client-level
+  # req_options[:retry] — deliberately: the person who configured the
+  # client is not necessarily the person streaming through it.
+  defp pin_retry_off(opts), do: Keyword.put(opts, :retry, false)
 
   defp check_status(%Req.Response{status: status}) when status in 200..299, do: :ok
 

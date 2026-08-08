@@ -58,7 +58,7 @@ defmodule Akaw.Attachment do
            params: opts,
            return: :response
          ) do
-      {:ok, %Req.Response{body: body} = resp} ->
+      {:ok, %Akaw.Response{body: body} = resp} ->
         meta = %{content_type: header(resp, "content-type"), etag: header(resp, "etag")}
         {:ok, body, meta}
 
@@ -112,7 +112,7 @@ defmodule Akaw.Attachment do
     "/#{Path.encode(db)}/#{Path.encode_id(doc_id)}/#{Path.encode(att_name)}"
   end
 
-  defp header(%Req.Response{} = resp, name) do
-    resp |> Req.Response.get_header(name) |> List.first()
+  defp header(%Akaw.Response{} = resp, name) do
+    resp |> Akaw.Response.get_header(name) |> List.first()
   end
 end
