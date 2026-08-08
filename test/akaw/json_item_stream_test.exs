@@ -70,6 +70,16 @@ defmodule Akaw.JsonItemStreamTest do
       end
     end
 
+    test "raises on whitespace-separated collapse too ([ { on one line)" do
+      # A reflowing proxy can keep the whitespace a minifier would
+      # strip; both shapes are the same silent-data-loss hazard.
+      chunks = [~s|{"rows":[ {"id":"a"}, {"id":"b"} ]}|]
+
+      assert_raise Akaw.Error, ~r/stream_format_error|minifies/, fn ->
+        JsonItemStream.items(chunks) |> Enum.to_list()
+      end
+    end
+
     test "an inline empty array is a valid empty response, not a format error" do
       # CouchDB itself emits `{"total_rows":0,"offset":0,"rows":[]}` on
       # one line for an empty result — zero items is the right answer.

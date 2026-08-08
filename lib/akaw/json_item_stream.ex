@@ -54,16 +54,17 @@ defmodule Akaw.JsonItemStream do
       String.ends_with?(trimmed, "[") ->
         {[], :in_array}
 
-      # Rows inlined right after their array opener — the whole response
-      # collapsed onto one line. Without this check the opener never
-      # matches, the array is never entered, and a 200 full of rows
-      # completes as zero items: silent data loss where the module
-      # promises a legible diagnostic. An inline empty array (`"rows":[]`)
-      # contains no `[{` and stays valid — zero items is the right answer
-      # there. The `[{` sequence can't appear in a legitimate header line:
-      # before the row array opens, the line holds only scalar metadata
-      # (total_rows, offset).
-      String.contains?(trimmed, "[{") ->
+      # Rows inlined after their array opener — the whole response
+      # collapsed onto one line, with or without whitespace between `[`
+      # and `{` (minifiers strip it, reflowing proxies may keep it).
+      # Without this check the opener never matches, the array is never
+      # entered, and a 200 full of rows completes as zero items: silent
+      # data loss where the module promises a legible diagnostic. An
+      # inline empty array (`"rows":[]`) never matches and stays valid —
+      # zero items is the right answer there. The pattern can't appear
+      # in a legitimate header line: before the row array opens, the
+      # line holds only scalar metadata (total_rows, offset).
+      String.match?(trimmed, ~r/\[\s*\{/) ->
         raise %Error{
           status: nil,
           error: "stream_format_error",
