@@ -67,7 +67,7 @@ defmodule Akaw.Changes do
   """
   @spec get(Client.t(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def get(%Client{} = client, db, opts \\ []) when is_binary(db) do
-    {req_opts, params} = split_feed_opts(opts)
+    {req_opts, params} = split_feed_opts(client, opts)
     Request.request(client, :get, "/#{Path.encode(db)}/_changes", [params: params] ++ req_opts)
   end
 
@@ -88,7 +88,7 @@ defmodule Akaw.Changes do
           {:ok, map()} | {:error, term()}
   def post(%Client{} = client, db, body, opts \\ [])
       when is_binary(db) and is_map(body) do
-    {req_opts, params} = split_feed_opts(opts)
+    {req_opts, params} = split_feed_opts(client, opts)
 
     Request.request(
       client,
@@ -219,7 +219,7 @@ defmodule Akaw.Changes do
         when acc: term()
   def reduce_while(%Client{} = client, db, acc, reducer, opts \\ [])
       when is_binary(db) and is_function(reducer, 2) do
-    {req_opts, params_opts} = build_continuous_opts(opts)
+    {req_opts, params_opts} = build_continuous_opts(client, opts)
 
     Streaming.reduce_lines_while(
       client,
@@ -246,7 +246,7 @@ defmodule Akaw.Changes do
         when acc: term()
   def reduce_while_post(%Client{} = client, db, body, acc, reducer, opts \\ [])
       when is_binary(db) and is_map(body) and is_function(reducer, 2) do
-    {req_opts, params_opts} = build_continuous_opts(opts)
+    {req_opts, params_opts} = build_continuous_opts(client, opts)
 
     Streaming.reduce_lines_while(
       client,
@@ -258,11 +258,11 @@ defmodule Akaw.Changes do
     )
   end
 
-  defp build_continuous_opts(opts) do
+  defp build_continuous_opts(client, opts) do
     reject_feed_override!(opts)
     {req_opts, couchdb_opts} = Streaming.split_req_opts(opts)
     params_opts = continuous_params(couchdb_opts)
-    req_opts = Streaming.default_receive_timeout(req_opts, couchdb_opts)
+    req_opts = Streaming.default_receive_timeout(client, req_opts, couchdb_opts)
     {req_opts, params_opts}
   end
 
@@ -273,11 +273,11 @@ defmodule Akaw.Changes do
   # immediately, so it keeps the transport default.
   @held_open_feeds ["longpoll", "continuous", "eventsource"]
 
-  defp split_feed_opts(opts) do
+  defp split_feed_opts(client, opts) do
     {req_opts, params} = Streaming.split_req_opts(opts)
 
     if to_string(Keyword.get(params, :feed, "normal")) in @held_open_feeds do
-      {Streaming.default_receive_timeout(req_opts, params), params}
+      {Streaming.default_receive_timeout(client, req_opts, params), params}
     else
       {req_opts, params}
     end

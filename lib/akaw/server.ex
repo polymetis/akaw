@@ -167,7 +167,7 @@ defmodule Akaw.Server do
     end
 
     {req_opts, couchdb_opts} = Akaw.Streaming.split_req_opts(opts)
-    req_opts = Akaw.Streaming.default_receive_timeout(req_opts, couchdb_opts)
+    req_opts = Akaw.Streaming.default_receive_timeout(client, req_opts, couchdb_opts)
     params = Keyword.put(couchdb_opts, :feed, "continuous")
 
     Akaw.Streaming.reduce_lines_while(

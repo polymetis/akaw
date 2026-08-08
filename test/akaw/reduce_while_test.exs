@@ -587,6 +587,8 @@ defmodule Akaw.ReduceWhileTest do
     # The helper that splits Req-level options out of an otherwise-CouchDB
     # opts keyword. Lives on Akaw.Streaming because it's shared by every
     # reduce_while wrapper.
+    defp bare_client, do: Akaw.new(base_url: "http://x")
+
     test "split_req_opts/1 pulls out :receive_timeout, :pool_timeout, :connect_options" do
       {req, rest} =
         Akaw.Streaming.split_req_opts(
@@ -605,19 +607,34 @@ defmodule Akaw.ReduceWhileTest do
       refute Keyword.has_key?(rest, :receive_timeout)
     end
 
-    test "default_receive_timeout/2 honors an explicit receive_timeout" do
-      req = Akaw.Streaming.default_receive_timeout([receive_timeout: 9_999], heartbeat: 30_000)
+    test "default_receive_timeout/3 honors an explicit per-call receive_timeout" do
+      req =
+        Akaw.Streaming.default_receive_timeout(bare_client(), [receive_timeout: 9_999],
+          heartbeat: 30_000
+        )
+
       assert Keyword.get(req, :receive_timeout) == 9_999
     end
 
-    test "default_receive_timeout/2 derives 2x heartbeat when not set" do
-      req = Akaw.Streaming.default_receive_timeout([], heartbeat: 30_000)
+    test "default_receive_timeout/3 stands down for a client-level receive_timeout" do
+      # Per-call opts merge after client req_options in Request.build/4,
+      # so a derived value placed per-call would silently override the
+      # client-level setting — hitting the exact users who worked around
+      # the old 15s death with Akaw.new(req_options: [receive_timeout: ...]).
+      client = Akaw.new(base_url: "http://x", req_options: [receive_timeout: 30_000])
+
+      req = Akaw.Streaming.default_receive_timeout(client, [], heartbeat: 30_000)
+      refute Keyword.has_key?(req, :receive_timeout)
+    end
+
+    test "default_receive_timeout/3 derives 2x heartbeat when not set" do
+      req = Akaw.Streaming.default_receive_timeout(bare_client(), [], heartbeat: 30_000)
       assert Keyword.get(req, :receive_timeout) == 60_000
     end
 
-    test "default_receive_timeout/2 picks 120s when heartbeat=true / \"true\" (server picks interval)" do
-      req_true = Akaw.Streaming.default_receive_timeout([], heartbeat: true)
-      req_str = Akaw.Streaming.default_receive_timeout([], heartbeat: "true")
+    test "default_receive_timeout/3 picks 120s when heartbeat=true / \"true\" (server picks interval)" do
+      req_true = Akaw.Streaming.default_receive_timeout(bare_client(), [], heartbeat: true)
+      req_str = Akaw.Streaming.default_receive_timeout(bare_client(), [], heartbeat: "true")
 
       assert Keyword.get(req_true, :receive_timeout) == 120_000
       assert Keyword.get(req_str, :receive_timeout) == 120_000
@@ -628,28 +645,33 @@ defmodule Akaw.ReduceWhileTest do
     # receive timeout, which used to kill every legitimately quiet feed
     # client-side. The derivation covers the server's window plus 5s
     # delivery slack.
-    test "default_receive_timeout/2 covers the server window when heartbeat is 0" do
-      req = Akaw.Streaming.default_receive_timeout([], heartbeat: 0)
+    test "default_receive_timeout/3 covers the server window when heartbeat is 0" do
+      req = Akaw.Streaming.default_receive_timeout(bare_client(), [], heartbeat: 0)
       assert Keyword.get(req, :receive_timeout) == 65_000
     end
 
-    test "default_receive_timeout/2 covers the server window for negative heartbeat" do
-      req = Akaw.Streaming.default_receive_timeout([], heartbeat: -1_000)
+    test "default_receive_timeout/3 covers the server window for negative heartbeat" do
+      req = Akaw.Streaming.default_receive_timeout(bare_client(), [], heartbeat: -1_000)
       assert Keyword.get(req, :receive_timeout) == 65_000
     end
 
-    test "default_receive_timeout/2 covers the server window with no heartbeat at all" do
-      req = Akaw.Streaming.default_receive_timeout([], [])
+    test "default_receive_timeout/3 covers the server window with no heartbeat at all" do
+      req = Akaw.Streaming.default_receive_timeout(bare_client(), [], [])
       assert Keyword.get(req, :receive_timeout) == 65_000
     end
 
-    test "default_receive_timeout/2 derives from an explicit :timeout param" do
-      req = Akaw.Streaming.default_receive_timeout([], timeout: 90_000)
+    test "default_receive_timeout/3 derives from an explicit :timeout param" do
+      req = Akaw.Streaming.default_receive_timeout(bare_client(), [], timeout: 90_000)
       assert Keyword.get(req, :receive_timeout) == 95_000
     end
 
-    test "default_receive_timeout/2 prefers heartbeat over :timeout (heartbeat overrides it server-side)" do
-      req = Akaw.Streaming.default_receive_timeout([], heartbeat: 30_000, timeout: 90_000)
+    test "default_receive_timeout/3 prefers heartbeat over :timeout (heartbeat overrides it server-side)" do
+      req =
+        Akaw.Streaming.default_receive_timeout(bare_client(), [],
+          heartbeat: 30_000,
+          timeout: 90_000
+        )
+
       assert Keyword.get(req, :receive_timeout) == 60_000
     end
 

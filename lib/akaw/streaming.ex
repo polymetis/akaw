@@ -293,11 +293,19 @@ defmodule Akaw.Streaming do
       (milliseconds, its default #{@server_default_feed_timeout}), so
       `receive_timeout = timeout + #{@feed_timeout_slack}` slack.
 
-  Explicit `:receive_timeout` always wins.
+  Explicit `:receive_timeout` always wins — per call *or* per client.
+  The per-call opts merge after the client's `req_options` in
+  `Akaw.Request.build/4`, so putting a derived value into per-call opts
+  would silently override a client-level setting; hence the check on
+  both layers, same as `default_retry_off/2`.
   """
-  @spec default_receive_timeout(keyword(), keyword()) :: keyword()
-  def default_receive_timeout(req_opts, couchdb_opts) do
-    if Keyword.has_key?(req_opts, :receive_timeout) do
+  @spec default_receive_timeout(Client.t(), keyword(), keyword()) :: keyword()
+  def default_receive_timeout(%Client{} = client, req_opts, couchdb_opts) do
+    explicit? =
+      Keyword.has_key?(req_opts, :receive_timeout) or
+        Keyword.has_key?(client.req_options, :receive_timeout)
+
+    if explicit? do
       req_opts
     else
       Keyword.put(req_opts, :receive_timeout, derive_receive_timeout(couchdb_opts))
