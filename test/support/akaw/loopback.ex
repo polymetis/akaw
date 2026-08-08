@@ -17,12 +17,20 @@ defmodule Akaw.Loopback do
   Every `url/1` / `client/2` call binds its own OS-assigned port
   (`port: 0`), so `async: true` suites can't collide, and the listener is
   supervised by the test that started it — torn down when the test exits.
+  `client/2` also starts a per-test Finch pool that dies with the test;
+  see `client/2` for why that matters.
 
-  The stub plug runs in a Bandit acceptor process, not the test process.
-  To observe the request from the test, close over the test pid and
-  message it (`test = self()` before the plug, `send(test, ...)` inside,
-  `assert_receive` after) — an `assert` directly inside the plug would
-  fail the acceptor, not the test.
+  The stub plug runs in a Bandit connection-handler process, not the
+  test process. To observe the request from the test, close over the
+  test pid and message it (`test = self()` before the plug,
+  `send(test, ...)` inside, `assert_receive` after) — an `assert`
+  directly inside the plug would fail the handler, not the test. A stub
+  that *crashes* answers 418 with the formatted exception (see
+  `FunPlug`), so a broken stub reads as a broken stub, never as a
+  plausible CouchDB response — with one gap: once a chunked stub has
+  sent its first chunk, a later bug can only surface as a mid-stream
+  close, indistinguishable from the transport failures streaming tests
+  pin on purpose.
 
   ## Assertion discipline: content, not chunk counts
 
@@ -39,13 +47,31 @@ defmodule Akaw.Loopback do
     @moduledoc false
     # Bandit mounts a module plug; this one closes the gap to the
     # anonymous-function plugs the test suite is written in.
+    #
+    # call/2 rescues stub bugs and answers 418 with the formatted
+    # exception. Without this, a crashed stub is byte-identical to a
+    # deliberately stubbed empty 500 — a shape real tests pin — and the
+    # stacktrace lands in an unattributed handler crash report instead
+    # of the failing test's diff. The status must be in Plug's
+    # reason-phrase table for Bandit to send it (599 raises there);
+    # 418 is registered, CouchDB never emits it, and Req never retries
+    # it — no assertion can be satisfied by a broken stub.
     @behaviour Plug
 
     @impl true
     def init(fun) when is_function(fun, 1), do: fun
 
     @impl true
-    def call(conn, fun), do: fun.(conn)
+    def call(conn, fun) do
+      fun.(conn)
+    rescue
+      exception ->
+        Plug.Conn.send_resp(
+          conn,
+          418,
+          Exception.format(:error, exception, __STACKTRACE__)
+        )
+    end
   end
 
   @doc """
@@ -54,7 +80,15 @@ defmodule Akaw.Loopback do
   def url(plug_fun) when is_function(plug_fun, 1) do
     server =
       start_supervised!(
-        {Bandit, plug: {FunPlug, plug_fun}, ip: {127, 0, 0, 1}, port: 0, startup_log: false},
+        {Bandit,
+         plug: {FunPlug, plug_fun},
+         ip: {127, 0, 0, 1},
+         port: 0,
+         startup_log: false,
+         # A test listener serves exactly one client; the default 100
+         # acceptors are ~300 idle processes per listener, ~400
+         # listeners per suite run.
+         thousand_island_options: [num_acceptors: 2]},
         # A test may mount several servers; the default child id (Bandit)
         # would collide on the second one.
         id: make_ref()
@@ -68,14 +102,22 @@ defmodule Akaw.Loopback do
   An `Akaw.Client` pointed at a fresh listener serving `plug_fun`.
   `extra` is passed through to `Akaw.new/1` (`:auth`, `:headers`,
   `:req_options`, ...).
+
+  The client rides a per-test Finch pool that dies with the test. The
+  shared `Req.Finch` instance keys pools by `{scheme, host, port}` and
+  never retires them — against a unique port per test it would
+  accumulate one dead pool and one CLOSE_WAIT fd per test for the rest
+  of the run, an EMFILE with a long fuse.
   """
   def client(plug_fun, extra \\ []) do
-    Akaw.new([base_url: url(plug_fun)] ++ extra)
+    Akaw.new([base_url: url(plug_fun), finch: start_finch()] ++ extra)
   end
 
   @doc """
-  Send `data` as a JSON response. Like `Req.Test.json/2`: respects a
-  status already set with `Plug.Conn.put_status/2`, defaults to 200.
+  Send `data` as a JSON response. Matches `Req.Test.json/2`'s status
+  handling: respects a status already set with `Plug.Conn.put_status/2`,
+  defaults to 200. (Unlike its namesake it always sets the content-type,
+  clobbering any already there.)
   """
   def json(%Plug.Conn{} = conn, data) do
     conn
@@ -89,9 +131,12 @@ defmodule Akaw.Loopback do
   the client side. Replaces `Req.Test.transport_error(conn, :econnrefused)`
   with the real thing.
 
-  The OS could in principle hand the port to another process between the
-  close and the connect; ephemeral allocation walks the port range, so a
-  just-released port isn't re-offered until the range wraps.
+  The OS could in principle re-issue the port to another process in the
+  few milliseconds between the close and the connect, but ephemeral
+  allocation rotates through the range, so a just-released port isn't
+  re-offered until the range wraps. The residual failure modes are loud
+  ones (a wrong response body, a self-connect parse error) — never a
+  false green.
   """
   def refused_url do
     {:ok, listen} = :gen_tcp.listen(0, ip: {127, 0, 0, 1})
@@ -104,6 +149,14 @@ defmodule Akaw.Loopback do
   An `Akaw.Client` whose every request fails with `:econnrefused`.
   """
   def refused_client(extra \\ []) do
-    Akaw.new([base_url: refused_url()] ++ extra)
+    Akaw.new([base_url: refused_url(), finch: start_finch()] ++ extra)
+  end
+
+  # Unique-atom names are required by Finch (it's a registered process);
+  # ~400 per suite run is far from any atom-table concern.
+  defp start_finch do
+    name = :"akaw_loopback_finch_#{System.unique_integer([:positive])}"
+    start_supervised!({Finch, name: name}, id: make_ref())
+    name
   end
 end
