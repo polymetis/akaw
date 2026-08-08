@@ -63,9 +63,13 @@ defmodule Akaw.Params do
   """
   @spec encode_doc_keys(keyword()) :: keyword()
   def encode_doc_keys(opts) when is_list(opts) do
+    # Both clauses guard on is_list: a raw atts_since is always a list
+    # of revs, so the only binary a caller can pass is the pre-encoded
+    # JSON string that used to be the sole working call shape — encoding
+    # that again would silently send a JSON string-of-a-string.
     Enum.map(opts, fn
       {:open_revs, revs} when is_list(revs) -> {:open_revs, JSON.encode!(revs)}
-      {:atts_since, revs} -> {:atts_since, JSON.encode!(revs)}
+      {:atts_since, revs} when is_list(revs) -> {:atts_since, JSON.encode!(revs)}
       pair -> pair
     end)
   end

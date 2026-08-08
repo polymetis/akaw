@@ -106,10 +106,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `:startkey`/`:endkey` (sent bare; CouchDB answers 400),
   `Akaw.Document.get/4`'s `:atts_since`/`:open_revs` (the natural list
   raised inside Req's query encoder before any I/O),
-  `Akaw.Documents.bulk_get/4`'s `:atts_since`, and
-  `Akaw.Changes.get/3`'s `:doc_ids` (with `filter: "_doc_ids"`). All
+  `Akaw.Documents.bulk_get/4`'s `:atts_since`, and `:doc_ids` (with
+  `filter: "_doc_ids"`) on every `Akaw.Changes` feed path — `get/3`,
+  `post/4`, the lazy streams, and the `reduce_while` variants. All
   four now encode the raw value; `open_revs: "all"` still passes
   through bare, since CouchDB rejects a JSON-quoted `"all"`.
+
+  Migration note if you were pre-encoding as a workaround: pass the raw
+  value now. `atts_since`/`open_revs`/`doc_ids` guard on lists, so a
+  pre-encoded JSON string still passes through unchanged — but
+  `all_dbs/2`'s `startkey`/`endkey` cannot distinguish a pre-quoted
+  string from a raw one (a raw string is a legitimate key), so a
+  pre-quoted `~s|"users"|` now double-encodes and silently matches
+  nothing. Drop the quoting.
 
 - **`Akaw.Document.copy/5` percent-encodes the destination id in the
   `Destination` header.** CouchDB splits that header on a bare `?` to

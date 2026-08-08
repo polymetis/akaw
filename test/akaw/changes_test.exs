@@ -103,6 +103,27 @@ defmodule Akaw.ChangesTest do
   end
 
   describe "stream/3 transport opts" do
+    test "JSON-encodes doc_ids on the continuous paths too" do
+      # The encoding is wired at two independent seams — split_feed_opts
+      # for get/post and continuous_params for the stream/reduce paths.
+      # This pins the second so a refactor can't drop it undetected.
+      plug = fn conn ->
+        Process.put(:akaw_continuous_docids_qs, conn.query_string)
+        Req.Test.json(conn, %{})
+      end
+
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+
+      client
+      |> Akaw.Changes.stream("mydb", filter: "_doc_ids", doc_ids: ["a", "c"])
+      |> Enum.take(1)
+
+      qs = Process.get(:akaw_continuous_docids_qs) || ""
+      decoded = URI.decode_query(qs)
+      assert decoded["feed"] == "continuous"
+      assert decoded["doc_ids"] == ~s|["a","c"]|
+    end
+
     test "routes transport opts out of the query string" do
       # The lazy continuous stream gets the same held-open
       # receive-timeout defaulting as the reduce paths; a caller's
