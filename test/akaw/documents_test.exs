@@ -1,6 +1,8 @@
 defmodule Akaw.DocumentsTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   setup do
     test = self()
 
@@ -14,10 +16,10 @@ defmodule Akaw.DocumentsTest do
         body: body
       })
 
-      Req.Test.json(conn, %{"rows" => []})
+      Loopback.json(conn, %{"rows" => []})
     end
 
-    {:ok, client: Akaw.new(base_url: "http://x", req_options: [plug: plug])}
+    {:ok, client: Loopback.client(plug)}
   end
 
   describe "all_docs/3" do
@@ -76,7 +78,7 @@ defmodule Akaw.DocumentsTest do
                Akaw.Documents.all_docs_keys(client, "mydb", ["a", "b", "c"])
 
       assert_receive %{method: "POST", path: "/mydb/_all_docs", body: body}
-      assert Jason.decode!(body) == %{"keys" => ["a", "b", "c"]}
+      assert JSON.decode!(body) == %{"keys" => ["a", "b", "c"]}
     end
   end
 
@@ -86,7 +88,7 @@ defmodule Akaw.DocumentsTest do
       assert {:ok, _} = Akaw.Documents.all_docs_queries(client, "mydb", queries)
 
       assert_receive %{method: "POST", path: "/mydb/_all_docs/queries", body: body}
-      decoded = Jason.decode!(body)
+      decoded = JSON.decode!(body)
 
       assert decoded["queries"] == [
                %{"include_docs" => true, "limit" => 10},
@@ -104,14 +106,19 @@ defmodule Akaw.DocumentsTest do
 
   describe "stream_all_docs/3" do
     test "→ GET /{db}/_all_docs and forwards JSON-typed params encoded" do
+      # Observed via ETS, not the process dictionary or send/assert_receive:
+      # the plug runs in a Bandit acceptor process, and consuming a lazy
+      # stream drains the caller's mailbox.
+      seen = :ets.new(:akaw_doc_stream, [:public])
+
       plug = fn conn ->
-        Process.put(:akaw_doc_stream_method, conn.method)
-        Process.put(:akaw_doc_stream_path, conn.request_path)
-        Process.put(:akaw_doc_stream_qs, conn.query_string)
-        Req.Test.json(conn, %{})
+        :ets.insert(seen, {:method, conn.method})
+        :ets.insert(seen, {:path, conn.request_path})
+        :ets.insert(seen, {:qs, conn.query_string})
+        Loopback.json(conn, %{})
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+      client = Loopback.client(plug)
 
       try do
         client |> Akaw.Documents.stream_all_docs("mydb", startkey: "u_") |> Enum.take(1)
@@ -119,10 +126,10 @@ defmodule Akaw.DocumentsTest do
         _ -> :ok
       end
 
-      assert Process.get(:akaw_doc_stream_method) == "GET"
-      assert Process.get(:akaw_doc_stream_path) == "/mydb/_all_docs"
+      assert [{:method, "GET"}] = :ets.lookup(seen, :method)
+      assert [{:path, "/mydb/_all_docs"}] = :ets.lookup(seen, :path)
 
-      qs = Process.get(:akaw_doc_stream_qs) || ""
+      assert [{:qs, qs}] = :ets.lookup(seen, :qs)
       decoded = URI.decode_query(qs)
       assert decoded["startkey"] == "\"u_\""
     end
@@ -130,12 +137,15 @@ defmodule Akaw.DocumentsTest do
 
   describe "stream_design_docs/3" do
     test "→ GET /{db}/_design_docs (streaming variant)" do
+      # ETS for the same reason as the stream_all_docs test above.
+      seen = :ets.new(:akaw_ddocs_stream, [:public])
+
       plug = fn conn ->
-        Process.put(:akaw_ddocs_stream_path, conn.request_path)
-        Req.Test.json(conn, %{})
+        :ets.insert(seen, {:path, conn.request_path})
+        Loopback.json(conn, %{})
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+      client = Loopback.client(plug)
 
       try do
         client |> Akaw.Documents.stream_design_docs("mydb") |> Enum.take(1)
@@ -143,7 +153,7 @@ defmodule Akaw.DocumentsTest do
         _ -> :ok
       end
 
-      assert Process.get(:akaw_ddocs_stream_path) == "/mydb/_design_docs"
+      assert [{:path, "/mydb/_design_docs"}] = :ets.lookup(seen, :path)
     end
   end
 
@@ -153,7 +163,7 @@ defmodule Akaw.DocumentsTest do
                Akaw.Documents.design_docs_keys(client, "mydb", ["_design/a"])
 
       assert_receive %{method: "POST", path: "/mydb/_design_docs", body: body}
-      assert Jason.decode!(body) == %{"keys" => ["_design/a"]}
+      assert JSON.decode!(body) == %{"keys" => ["_design/a"]}
     end
   end
 
@@ -164,7 +174,7 @@ defmodule Akaw.DocumentsTest do
 
       assert_receive %{method: "POST", path: "/mydb/_bulk_get", body: body}
 
-      assert Jason.decode!(body) == %{
+      assert JSON.decode!(body) == %{
                "docs" => [%{"id" => "a"}, %{"id" => "b", "rev" => "1-x"}]
              }
     end
@@ -184,7 +194,7 @@ defmodule Akaw.DocumentsTest do
       assert {:ok, _} = Akaw.Documents.bulk_docs(client, "mydb", docs)
 
       assert_receive %{method: "POST", path: "/mydb/_bulk_docs", body: body}
-      decoded = Jason.decode!(body)
+      decoded = JSON.decode!(body)
       assert decoded["docs"] == [%{"name" => "alice"}, %{"name" => "bob"}]
     end
 
@@ -195,7 +205,7 @@ defmodule Akaw.DocumentsTest do
                )
 
       assert_receive %{path: "/mydb/_bulk_docs", query_string: "", body: body}
-      decoded = Jason.decode!(body)
+      decoded = JSON.decode!(body)
       assert decoded["new_edits"] == false
       assert decoded["docs"] == [%{"_id" => "a", "_rev" => "1-x"}]
     end
@@ -209,7 +219,7 @@ defmodule Akaw.DocumentsTest do
                )
 
       assert_receive %{body: body}
-      decoded = Jason.decode!(body)
+      decoded = JSON.decode!(body)
       assert decoded["docs"] == [%{"n" => "right"}]
       assert decoded["new_edits"] == false
     end

@@ -1,6 +1,8 @@
 defmodule Akaw.ChangesTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   setup do
     test = self()
 
@@ -14,10 +16,10 @@ defmodule Akaw.ChangesTest do
         body: body
       })
 
-      Req.Test.json(conn, %{"results" => [], "last_seq" => "0"})
+      Loopback.json(conn, %{"results" => [], "last_seq" => "0"})
     end
 
-    {:ok, client: Akaw.new(base_url: "http://x", req_options: [plug: plug])}
+    {:ok, client: Loopback.client(plug)}
   end
 
   describe "get/3" do
@@ -69,9 +71,8 @@ defmodule Akaw.ChangesTest do
       end
 
       client =
-        Akaw.new(
-          base_url: "http://x",
-          req_options: [plug: plug, retry: :safe_transient, retry_delay: fn _ -> 0 end]
+        Loopback.client(plug,
+          req_options: [retry: :safe_transient, retry_delay: fn _ -> 0 end]
         )
 
       assert {:error, %Akaw.Error{status: 503}} =
@@ -120,7 +121,7 @@ defmodule Akaw.ChangesTest do
     end
 
     test "stream/3 raises stream_decode_error on a corrupt line, not a bare JSON error" do
-      client = Akaw.new(base_url: "http://x", req_options: [plug: corrupt_line_plug()])
+      client = Loopback.client(corrupt_line_plug())
 
       error =
         assert_raise Akaw.Error, ~r/stream_decode_error|failed to decode/, fn ->
@@ -131,7 +132,7 @@ defmodule Akaw.ChangesTest do
     end
 
     test "reduce_while/5 raises the same legible error for a corrupt line" do
-      client = Akaw.new(base_url: "http://x", req_options: [plug: corrupt_line_plug()])
+      client = Loopback.client(corrupt_line_plug())
 
       error =
         assert_raise Akaw.Error, fn ->
@@ -149,18 +150,20 @@ defmodule Akaw.ChangesTest do
       # The encoding is wired at two independent seams — split_feed_opts
       # for get/post and continuous_params for the stream/reduce paths.
       # This pins the second so a refactor can't drop it undetected.
+      seen = :ets.new(:akaw_continuous_docids_qs, [:public])
+
       plug = fn conn ->
-        Process.put(:akaw_continuous_docids_qs, conn.query_string)
-        Req.Test.json(conn, %{})
+        :ets.insert(seen, {:qs, conn.query_string})
+        Loopback.json(conn, %{})
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+      client = Loopback.client(plug)
 
       client
       |> Akaw.Changes.stream("mydb", filter: "_doc_ids", doc_ids: ["a", "c"])
       |> Enum.take(1)
 
-      qs = Process.get(:akaw_continuous_docids_qs) || ""
+      assert [{:qs, qs}] = :ets.lookup(seen, :qs)
       decoded = URI.decode_query(qs)
       assert decoded["feed"] == "continuous"
       assert decoded["doc_ids"] == ~s|["a","c"]|
@@ -171,22 +174,24 @@ defmodule Akaw.ChangesTest do
       # receive-timeout defaulting as the reduce paths; a caller's
       # :receive_timeout must reach the transport, not CouchDB.
       #
-      # Process.put, not send: the lazy stream's unselective receive
-      # drains the test process's own mailbox during consumption — a
-      # message-based probe gets eaten by the very footgun the
-      # reduce_while docs warn about.
+      # ETS, not send: the lazy stream's unselective receive drains the
+      # test process's own mailbox during consumption — a message-based
+      # probe gets eaten by the very footgun the reduce_while docs warn
+      # about.
+      seen = :ets.new(:akaw_stream_opts_qs, [:public])
+
       plug = fn conn ->
-        Process.put(:akaw_stream_opts_qs, conn.query_string)
-        Req.Test.json(conn, %{})
+        :ets.insert(seen, {:qs, conn.query_string})
+        Loopback.json(conn, %{})
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+      client = Loopback.client(plug)
 
       client
       |> Akaw.Changes.stream("mydb", since: "now", receive_timeout: 90_000)
       |> Enum.take(1)
 
-      qs = Process.get(:akaw_stream_opts_qs) || ""
+      assert [{:qs, qs}] = :ets.lookup(seen, :qs)
       assert qs =~ "since=now"
       assert qs =~ "feed=continuous"
       refute qs =~ "receive_timeout"
@@ -208,7 +213,7 @@ defmodule Akaw.ChangesTest do
         query_string: qs
       }
 
-      assert Jason.decode!(body) == %{"doc_ids" => ["a", "b"]}
+      assert JSON.decode!(body) == %{"doc_ids" => ["a", "b"]}
       assert qs =~ "filter=_doc_ids"
       assert qs =~ "since=now"
     end
@@ -221,11 +226,11 @@ defmodule Akaw.ChangesTest do
         |> Plug.Conn.put_resp_content_type("application/json")
         |> Plug.Conn.send_resp(
           404,
-          Jason.encode!(%{"error" => "not_found", "reason" => "no_db_file"})
+          JSON.encode!(%{"error" => "not_found", "reason" => "no_db_file"})
         )
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+      client = Loopback.client(plug)
 
       assert_raise Akaw.Error, ~r/404/, fn ->
         client |> Akaw.Changes.stream("missing") |> Enum.take(1)
@@ -235,16 +240,18 @@ defmodule Akaw.ChangesTest do
 
   describe "stream_post/4" do
     test "POSTs body with filter and forces feed=continuous" do
+      seen = :ets.new(:akaw_changes_post, [:public])
+
       plug = fn conn ->
         {:ok, body, _} = Plug.Conn.read_body(conn)
-        Process.put(:akaw_changes_post_method, conn.method)
-        Process.put(:akaw_changes_post_path, conn.request_path)
-        Process.put(:akaw_changes_post_qs, conn.query_string)
-        Process.put(:akaw_changes_post_body, body)
-        Req.Test.json(conn, %{})
+        :ets.insert(seen, {:method, conn.method})
+        :ets.insert(seen, {:path, conn.request_path})
+        :ets.insert(seen, {:qs, conn.query_string})
+        :ets.insert(seen, {:body, body})
+        Loopback.json(conn, %{})
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+      client = Loopback.client(plug)
 
       try do
         client
@@ -257,14 +264,13 @@ defmodule Akaw.ChangesTest do
         _ -> :ok
       end
 
-      assert Process.get(:akaw_changes_post_method) == "POST"
-      assert Process.get(:akaw_changes_post_path) == "/mydb/_changes"
+      assert [{:method, "POST"}] = :ets.lookup(seen, :method)
+      assert [{:path, "/mydb/_changes"}] = :ets.lookup(seen, :path)
 
-      assert Jason.decode!(Process.get(:akaw_changes_post_body)) == %{
-               "doc_ids" => ["a", "b"]
-             }
+      assert [{:body, body}] = :ets.lookup(seen, :body)
+      assert JSON.decode!(body) == %{"doc_ids" => ["a", "b"]}
 
-      qs = Process.get(:akaw_changes_post_qs) || ""
+      assert [{:qs, qs}] = :ets.lookup(seen, :qs)
       assert qs =~ "feed=continuous"
       assert qs =~ "filter=_doc_ids"
       assert qs =~ "since=now"
@@ -272,20 +278,20 @@ defmodule Akaw.ChangesTest do
   end
 
   describe "stream/3 — feed forcing" do
-    # We capture the query string into the process dictionary rather than
-    # sending it as a message — `next_chunk`'s `receive` eagerly drains the
-    # mailbox and would swallow a regular `send`.
-    #
-    # (Req 0.7's plug adapter does deliver individual chunks, so plug-based
-    # chunk-boundary tests are possible now; see reduce_while_test.exs. The
-    # mailbox caveat above is unrelated and still applies.)
+    # We capture the query string into an ETS table rather than sending it
+    # as a message — `next_chunk`'s `receive` eagerly drains the mailbox
+    # and would swallow a regular `send`. (The plug runs in a Bandit
+    # acceptor process, so the process dictionary can't reach the test
+    # either.)
     test "forces feed=continuous and forwards other opts" do
+      seen = :ets.new(:akaw_changes_qs, [:public])
+
       plug = fn conn ->
-        Process.put(:akaw_changes_qs, conn.query_string)
-        Req.Test.json(conn, %{})
+        :ets.insert(seen, {:qs, conn.query_string})
+        Loopback.json(conn, %{})
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+      client = Loopback.client(plug)
 
       try do
         client
@@ -295,7 +301,7 @@ defmodule Akaw.ChangesTest do
         _ -> :ok
       end
 
-      qs = Process.get(:akaw_changes_qs) || ""
+      assert [{:qs, qs}] = :ets.lookup(seen, :qs)
       assert qs =~ "feed=continuous"
       assert qs =~ "since=now"
       assert qs =~ "heartbeat=30000"

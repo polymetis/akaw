@@ -1,6 +1,8 @@
 defmodule Akaw.ViewTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   setup do
     test = self()
 
@@ -14,10 +16,10 @@ defmodule Akaw.ViewTest do
         body: body
       })
 
-      Req.Test.json(conn, %{"rows" => []})
+      Loopback.json(conn, %{"rows" => []})
     end
 
-    {:ok, client: Akaw.new(base_url: "http://x", req_options: [plug: plug])}
+    {:ok, client: Loopback.client(plug)}
   end
 
   describe "get/5" do
@@ -65,7 +67,7 @@ defmodule Akaw.ViewTest do
         body: body
       }
 
-      assert Jason.decode!(body) == %{"keys" => ["alice", "bob"]}
+      assert JSON.decode!(body) == %{"keys" => ["alice", "bob"]}
     end
   end
 
@@ -80,21 +82,26 @@ defmodule Akaw.ViewTest do
         body: body
       }
 
-      decoded = Jason.decode!(body)
+      decoded = JSON.decode!(body)
       assert length(decoded["queries"]) == 2
     end
   end
 
   describe "stream/5" do
     test "→ GET /_view/{view} (streaming variant); JSON-encodes startkey/endkey" do
+      # Observed via ETS, not send/assert_receive: consuming a lazy
+      # stream drains the caller's mailbox, so a message sent mid-stream
+      # would be eaten before the test could assert on it.
+      seen = :ets.new(:akaw_view_stream, [:public])
+
       plug = fn conn ->
-        Process.put(:akaw_view_stream_method, conn.method)
-        Process.put(:akaw_view_stream_path, conn.request_path)
-        Process.put(:akaw_view_stream_qs, conn.query_string)
-        Req.Test.json(conn, %{})
+        :ets.insert(seen, {:method, conn.method})
+        :ets.insert(seen, {:path, conn.request_path})
+        :ets.insert(seen, {:qs, conn.query_string})
+        Loopback.json(conn, %{})
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+      client = Loopback.client(plug)
 
       try do
         client
@@ -104,12 +111,12 @@ defmodule Akaw.ViewTest do
         _ -> :ok
       end
 
-      assert Process.get(:akaw_view_stream_method) == "GET"
+      assert :ets.lookup(seen, :method) == [{:method, "GET"}]
 
-      assert Process.get(:akaw_view_stream_path) ==
-               "/mydb/_design/ddoc1/_view/by_name"
+      assert :ets.lookup(seen, :path) ==
+               [{:path, "/mydb/_design/ddoc1/_view/by_name"}]
 
-      qs = Process.get(:akaw_view_stream_qs) || ""
+      [{:qs, qs}] = :ets.lookup(seen, :qs)
       decoded = URI.decode_query(qs)
       assert decoded["startkey"] == "\"a\""
       assert decoded["endkey"] == "\"z\""
@@ -118,15 +125,18 @@ defmodule Akaw.ViewTest do
 
   describe "stream_post_keys/6" do
     test "POSTs to /_view/{view} with {keys: [...]} body (streaming)" do
+      # ETS for the same lazy-stream mailbox-draining reason as above.
+      seen = :ets.new(:akaw_view_postk, [:public])
+
       plug = fn conn ->
         {:ok, body, _} = Plug.Conn.read_body(conn)
-        Process.put(:akaw_view_postk_method, conn.method)
-        Process.put(:akaw_view_postk_path, conn.request_path)
-        Process.put(:akaw_view_postk_body, body)
-        Req.Test.json(conn, %{})
+        :ets.insert(seen, {:method, conn.method})
+        :ets.insert(seen, {:path, conn.request_path})
+        :ets.insert(seen, {:body, body})
+        Loopback.json(conn, %{})
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+      client = Loopback.client(plug)
 
       try do
         client
@@ -136,14 +146,13 @@ defmodule Akaw.ViewTest do
         _ -> :ok
       end
 
-      assert Process.get(:akaw_view_postk_method) == "POST"
+      assert :ets.lookup(seen, :method) == [{:method, "POST"}]
 
-      assert Process.get(:akaw_view_postk_path) ==
-               "/mydb/_design/ddoc1/_view/by_name"
+      assert :ets.lookup(seen, :path) ==
+               [{:path, "/mydb/_design/ddoc1/_view/by_name"}]
 
-      assert Jason.decode!(Process.get(:akaw_view_postk_body)) == %{
-               "keys" => ["alice", "bob"]
-             }
+      [{:body, body}] = :ets.lookup(seen, :body)
+      assert JSON.decode!(body) == %{"keys" => ["alice", "bob"]}
     end
   end
 end
