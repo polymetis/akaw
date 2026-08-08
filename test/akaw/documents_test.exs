@@ -120,11 +120,7 @@ defmodule Akaw.DocumentsTest do
 
       client = Loopback.client(plug)
 
-      try do
-        client |> Akaw.Documents.stream_all_docs("mydb", startkey: "u_") |> Enum.take(1)
-      rescue
-        _ -> :ok
-      end
+      client |> Akaw.Documents.stream_all_docs("mydb", startkey: "u_") |> Enum.take(1)
 
       assert [{:method, "GET"}] = :ets.lookup(seen, :method)
       assert [{:path, "/mydb/_all_docs"}] = :ets.lookup(seen, :path)
@@ -147,11 +143,7 @@ defmodule Akaw.DocumentsTest do
 
       client = Loopback.client(plug)
 
-      try do
-        client |> Akaw.Documents.stream_design_docs("mydb") |> Enum.take(1)
-      rescue
-        _ -> :ok
-      end
+      client |> Akaw.Documents.stream_design_docs("mydb") |> Enum.take(1)
 
       assert [{:path, "/mydb/_design_docs"}] = :ets.lookup(seen, :path)
     end

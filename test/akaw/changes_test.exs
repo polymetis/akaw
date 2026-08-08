@@ -253,16 +253,12 @@ defmodule Akaw.ChangesTest do
 
       client = Loopback.client(plug)
 
-      try do
-        client
-        |> Akaw.Changes.stream_post("mydb", %{doc_ids: ["a", "b"]},
-          filter: "_doc_ids",
-          since: "now"
-        )
-        |> Enum.take(1)
-      rescue
-        _ -> :ok
-      end
+      client
+      |> Akaw.Changes.stream_post("mydb", %{doc_ids: ["a", "b"]},
+        filter: "_doc_ids",
+        since: "now"
+      )
+      |> Enum.take(1)
 
       assert [{:method, "POST"}] = :ets.lookup(seen, :method)
       assert [{:path, "/mydb/_changes"}] = :ets.lookup(seen, :path)
@@ -293,13 +289,9 @@ defmodule Akaw.ChangesTest do
 
       client = Loopback.client(plug)
 
-      try do
-        client
-        |> Akaw.Changes.stream("mydb", since: "now", heartbeat: 30_000)
-        |> Enum.take(1)
-      rescue
-        _ -> :ok
-      end
+      client
+      |> Akaw.Changes.stream("mydb", since: "now", heartbeat: 30_000)
+      |> Enum.take(1)
 
       assert [{:qs, qs}] = :ets.lookup(seen, :qs)
       assert qs =~ "feed=continuous"

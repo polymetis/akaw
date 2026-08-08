@@ -156,11 +156,7 @@ defmodule Akaw.ServerTest do
 
     client = Loopback.client(plug)
 
-    try do
-      client |> Akaw.Server.stream_db_updates(since: "now") |> Enum.take(1)
-    rescue
-      _ -> :ok
-    end
+    client |> Akaw.Server.stream_db_updates(since: "now") |> Enum.take(1)
 
     assert [{:qs, qs}] = :ets.lookup(seen, :qs)
     assert qs =~ "feed=continuous"

@@ -103,13 +103,9 @@ defmodule Akaw.ViewTest do
 
       client = Loopback.client(plug)
 
-      try do
-        client
-        |> Akaw.View.stream("mydb", "ddoc1", "by_name", startkey: "a", endkey: "z")
-        |> Enum.take(1)
-      rescue
-        _ -> :ok
-      end
+      client
+      |> Akaw.View.stream("mydb", "ddoc1", "by_name", startkey: "a", endkey: "z")
+      |> Enum.take(1)
 
       assert :ets.lookup(seen, :method) == [{:method, "GET"}]
 
@@ -138,13 +134,9 @@ defmodule Akaw.ViewTest do
 
       client = Loopback.client(plug)
 
-      try do
-        client
-        |> Akaw.View.stream_post_keys("mydb", "ddoc1", "by_name", ["alice", "bob"])
-        |> Enum.take(1)
-      rescue
-        _ -> :ok
-      end
+      client
+      |> Akaw.View.stream_post_keys("mydb", "ddoc1", "by_name", ["alice", "bob"])
+      |> Enum.take(1)
 
       assert :ets.lookup(seen, :method) == [{:method, "POST"}]
 
