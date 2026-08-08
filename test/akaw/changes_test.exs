@@ -75,7 +75,7 @@ defmodule Akaw.ChangesTest do
         )
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug, retry: false])
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
 
       assert_raise Akaw.Error, ~r/404/, fn ->
         client |> Akaw.Changes.stream("missing") |> Enum.take(1)
@@ -94,7 +94,7 @@ defmodule Akaw.ChangesTest do
         Req.Test.json(conn, %{})
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug, retry: false])
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
 
       try do
         client
@@ -135,7 +135,7 @@ defmodule Akaw.ChangesTest do
         Req.Test.json(conn, %{})
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug, retry: false])
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
 
       try do
         client

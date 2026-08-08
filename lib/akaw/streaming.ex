@@ -18,6 +18,20 @@ defmodule Akaw.Streaming do
   #     calling process and (b) blocking in the reducer stalls socket
   #     reads and applies real TCP backpressure to CouchDB.
   #
+  # ## Retry: off by default, both flavors
+  #
+  # Req's default `retry: :safe_transient` re-runs the whole request after
+  # a transient failure. For a complete-response request that's a
+  # convenience; for a streaming request it's a correctness bug: with
+  # `into:` collectors the body consumed before the failure has already
+  # been fed to the caller (or their mailbox), and the retried attempt
+  # builds a fresh `%Req.Response{}` — the private accumulator resets to
+  # `init_acc` and every row is delivered again. `{:ok, final_acc}` must
+  # mean "each item was delivered exactly once", so streaming requests
+  # default `retry: false`. An explicit `:retry` (per call, or per client
+  # via `req_options`) is respected — opting in means opting into
+  # re-delivery.
+  #
   # ## chunks/4 — idle timeout
   #
   # `next_chunk/1` does a `receive` with an `after` clause keyed on the
@@ -85,7 +99,11 @@ defmodule Akaw.Streaming do
 
   defp open(client, method, path, opts) do
     {idle_timeout, opts} = Keyword.pop(opts, :idle_timeout, @default_idle_timeout)
-    opts = Keyword.put(opts, :into, :self)
+
+    opts =
+      opts
+      |> Keyword.put(:into, :self)
+      |> default_retry_off(client)
 
     case Request.request_raw(client, method, path, opts) do
       {:ok, %Req.Response{status: status} = resp} when status in 200..299 ->
@@ -425,11 +443,26 @@ defmodule Akaw.Streaming do
   end
 
   defp run_request(client, method, path, opts, collector) do
-    opts = Keyword.put(opts, :into, collector)
+    opts =
+      opts
+      |> Keyword.put(:into, collector)
+      |> default_retry_off(client)
 
     case Request.request_raw(client, method, path, opts) do
       {:ok, %Req.Response{} = resp} -> {:ok, resp}
       {:error, exception} -> {:error, Error.wrap_transport(exception)}
+    end
+  end
+
+  # See "Retry: off by default" in the module comment. The per-call opts
+  # merge after the client's req_options in Request.build/4, so a bare
+  # `Keyword.put` here would override a client-level opt-in — hence the
+  # explicit has_key? checks on both layers.
+  defp default_retry_off(opts, %Client{req_options: req_options}) do
+    if Keyword.has_key?(opts, :retry) or Keyword.has_key?(req_options, :retry) do
+      opts
+    else
+      Keyword.put(opts, :retry, false)
     end
   end
 

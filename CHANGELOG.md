@@ -87,6 +87,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Streaming requests no longer inherit Req's automatic retry.** Req's
+  default `retry: :safe_transient` re-runs the whole request after a
+  transient failure (a 5xx, a dropped connection, a receive timeout). On
+  the streaming paths — `stream/N`, `reduce_while/N`, and friends — the
+  rows consumed before the failure had already been delivered, and the
+  retried attempt reset the internal accumulator and delivered them all
+  again: a mid-feed disconnect during `reduce_while_all_docs` over a
+  million rows silently re-ran the reducer from row one with the
+  accumulator wiped, and a node restart mid-`_changes` re-delivered
+  already-processed changes. Streaming requests now pin `retry: false`;
+  `{:ok, final_acc}` means every row was delivered exactly once. An
+  explicit `:retry` (per call or per client `req_options`) is respected
+  for reducers that prefer restart-from-scratch over failing.
+  Non-streaming requests keep Req's default retry.
+
 - **A `password_fn` that raises or exits during a scheduled refresh no
   longer crash-loops `Akaw.SessionServer`.** The `:password` option is
   documented for deferred secret lookup (Vault, K8s secret reloaders) —

@@ -172,6 +172,15 @@ defmodule Akaw.Changes do
       Akaw.Changes.reduce_while(client, "users", 0,
         fn _, n -> {:cont, n + 1} end,
         since: "now", heartbeat: 30_000)
+
+  ## Retry
+
+  Req's automatic retry is disabled on streaming paths: a mid-feed
+  transport failure surfaces as `{:error, %Akaw.Error{}}` rather than
+  transparently re-running the request — which would reset the
+  accumulator and feed every change to the reducer again. If your
+  reducer is idempotent and you'd rather have the restart, opt back in
+  with `Akaw.new(req_options: [retry: :safe_transient])`.
   """
   @spec reduce_while(
           Client.t(),
