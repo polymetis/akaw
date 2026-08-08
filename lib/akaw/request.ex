@@ -93,8 +93,8 @@ defmodule Akaw.Request do
   # the req_options and per-call merges, so it also catches a `:finch` a
   # caller set directly through `:req_options`.
   #
-  # `:receive_timeout` and `:connect_options` are NOT deprecated and stay
-  # flat — don't "helpfully" fold those in too.
+  # `:receive_timeout` is NOT deprecated and stays flat — don't
+  # "helpfully" fold it in too.
   defp normalize_finch(opts) do
     opts
     |> normalize_finch_name()
@@ -109,19 +109,14 @@ defmodule Akaw.Request do
     end
   end
 
-  # `:pool_timeout` belongs inside `finch: [...]` now — except alongside
-  # `:connect_options`, where Req raises if `:finch` is present at all
-  # (`finch.ex`: "cannot set both :finch and :connect_options"). There we
-  # leave it flat and let Req's deprecation warning stand, rather than
-  # turning a warning into a crash.
+  # `:pool_timeout` belongs inside `finch: [...]` now. (The old
+  # leave-it-flat-alongside-:connect_options corner is gone with
+  # :connect_options itself — connection options live on a named Finch
+  # pool since the Phase 0 contract narrowing.)
   defp fold_finch_request_opts(opts) do
-    if Keyword.has_key?(opts, :connect_options) do
-      opts
-    else
-      case Keyword.split(opts, [:pool_timeout]) do
-        {[], _} -> opts
-        {flat, rest} -> Keyword.update(rest, :finch, flat, &Keyword.merge(&1, flat))
-      end
+    case Keyword.split(opts, [:pool_timeout]) do
+      {[], _} -> opts
+      {flat, rest} -> Keyword.update(rest, :finch, flat, &Keyword.merge(&1, flat))
     end
   end
 

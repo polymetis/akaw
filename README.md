@@ -153,9 +153,10 @@ children = [{Finch, name: MyApp.Finch, pools: %{default: [size: 50]}}]
 client = Akaw.new(base_url: url, finch: MyApp.Finch)
 ```
 
-Per-call transport escape hatches (`:receive_timeout`, `:pool_timeout`,
-`:connect_options`) are accepted wherever they make sense, and arbitrary Req
-options can be set per client via `:req_options`.
+Per-call transport escape hatches (`:receive_timeout`, `:pool_timeout`) are
+accepted wherever they make sense. Client-level options are a narrow, named
+set — see `Akaw.new/1` — and connection-level options (TLS for self-signed
+CouchDB, proxies) belong on a named Finch pool as above.
 
 ## Testing against Akaw
 

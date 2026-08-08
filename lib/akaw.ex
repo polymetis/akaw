@@ -115,7 +115,10 @@ defmodule Akaw do
 
         * `:receive_timeout` — Finch's between-chunk timeout in ms
         * `:pool_timeout` — Finch wait time to acquire a pool worker
-        * `:connect_options` — TCP/TLS options Finch forwards to Mint
+
+      Connection-level options (TLS for self-signed CouchDB, proxies)
+      are configured on a named Finch pool, not per call — see
+      "Connection pooling" below.
 
       Streaming and feed requests never retry — a per-call `retry:`
       raises `ArgumentError`, and a client-level
@@ -173,8 +176,16 @@ defmodule Akaw do
 
     * `:headers` — list of `{name, value}` headers added to every request.
 
-    * `:req_options` — keyword list of Req options merged into every request
-      (e.g. `receive_timeout: 30_000`). Per-call options override these.
+    * `:req_options` — a *narrow, named* set of client-level options merged
+      into every request; per-call options override these. Allowed keys:
+      `:receive_timeout`, `:pool_timeout`, `:retry`, `:retry_delay`
+      (plain requests only — streaming and feed paths never retry),
+      `:compressed`, `:headers`, and `:plug` (test stubbing). Anything
+      else raises `ArgumentError` — this is deliberately not an
+      arbitrary passthrough to the underlying HTTP client, so the
+      client contract survives a transport change. Connection-level
+      options (TLS for self-signed CouchDB, proxies) belong on a named
+      Finch pool passed via `:finch` — see "Connection pooling".
 
   ## Examples
 
@@ -215,8 +226,49 @@ defmodule Akaw do
       auth: Keyword.get(opts, :auth) || url_auth,
       finch: Keyword.get(opts, :finch),
       headers: Keyword.get(opts, :headers, []),
-      req_options: Keyword.get(opts, :req_options, [])
+      req_options: opts |> Keyword.get(:req_options, []) |> validate_req_options!()
     }
+  end
+
+  # The named allowlist for client-level request options. Deliberately
+  # narrow: an arbitrary passthrough to the HTTP client would weld the
+  # public contract to that client's option surface — the exact coupling
+  # the transport-neutrality work exists to prevent.
+  @allowed_req_options [
+    :receive_timeout,
+    :pool_timeout,
+    :retry,
+    :retry_delay,
+    :compressed,
+    :headers,
+    :plug
+  ]
+
+  defp validate_req_options!(req_options) when is_list(req_options) do
+    case Keyword.keys(req_options) -- @allowed_req_options do
+      [] ->
+        req_options
+
+      unknown ->
+        raise ArgumentError, """
+        unknown key(s) in :req_options: #{inspect(Enum.uniq(unknown))}
+
+        :req_options is a narrow, named allowlist — #{inspect(@allowed_req_options)} \
+        — not an arbitrary passthrough to the underlying HTTP client.
+
+        If you were passing :connect_options (custom TLS for a self-signed \
+        CouchDB, proxy settings): connection options are configured on a \
+        named Finch pool instead —
+
+            children = [
+              {Finch,
+               name: MyApp.CouchPool,
+               pools: %{default: [conn_opts: [transport_opts: [cacertfile: "..."]]]}}
+            ]
+
+            Akaw.new(base_url: url, finch: MyApp.CouchPool)
+        """
+    end
   end
 
   # Credentials embedded in the URL (`http://admin:pw@host:5984`) used to be

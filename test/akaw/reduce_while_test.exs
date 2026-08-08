@@ -589,19 +589,17 @@ defmodule Akaw.ReduceWhileTest do
     # reduce_while wrapper.
     defp bare_client, do: Akaw.new(base_url: "http://x")
 
-    test "split_req_opts/1 pulls out :receive_timeout, :pool_timeout, :connect_options" do
+    test "split_req_opts/1 pulls out :receive_timeout and :pool_timeout" do
       {req, rest} =
         Akaw.Streaming.split_req_opts(
           receive_timeout: 1_000,
           pool_timeout: 500,
-          connect_options: [protocols: [:http1]],
           since: "now",
           heartbeat: 30_000
         )
 
       assert Keyword.get(req, :receive_timeout) == 1_000
       assert Keyword.get(req, :pool_timeout) == 500
-      assert Keyword.get(req, :connect_options) == [protocols: [:http1]]
       assert Keyword.get(rest, :since) == "now"
       assert Keyword.get(rest, :heartbeat) == 30_000
       refute Keyword.has_key?(rest, :receive_timeout)

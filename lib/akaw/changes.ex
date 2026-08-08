@@ -63,8 +63,8 @@ defmodule Akaw.Changes do
   an integer `:heartbeat`, 120s for a server-picked one
   (`heartbeat: true`), otherwise `:timeout` plus slack.
 
-  `:receive_timeout` / `:pool_timeout` / `:connect_options` in `opts`
-  route to the transport rather than the query string; an explicit
+  `:receive_timeout` / `:pool_timeout` in `opts` route to the
+  transport rather than the query string; an explicit
   `:receive_timeout` always wins. Held-open feeds never retry
   (`retry:` raises): retrying a longpoll that timed out client-side is
   guaranteed to time out again while abandoning server-side
@@ -206,7 +206,7 @@ defmodule Akaw.Changes do
   ## Idle timeout
 
   `opts` is a flat keyword of CouchDB query params; you can also drop
-  `:receive_timeout` / `:pool_timeout` / `:connect_options` in there
+  `:receive_timeout` / `:pool_timeout` in there
   and they'll be routed to the transport (Finch/Mint, via Req) instead
   of becoming query params.
 

@@ -116,6 +116,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   guaranteed to fail again while abandoning server-side connections.
   Plain non-streaming requests keep Req's default retry.
 
+- **`:req_options` is now a narrow, named allowlist** —
+  `:receive_timeout`, `:pool_timeout`, `:retry`/`:retry_delay` (plain
+  requests only), `:compressed`, `:headers`, `:plug` — and anything else
+  raises `ArgumentError` at `Akaw.new/1`. The open passthrough welded
+  akaw's public contract to the underlying HTTP client's option surface
+  (and let secrets ride in unredactable positions); the named set
+  survives a transport change. `:connect_options` is removed with it:
+  connection-level options (TLS for self-signed CouchDB, proxies) are
+  configured on a named Finch pool passed via `:finch` — the error
+  message and docs carry the copy-pasteable supervision snippet.
+
 ### Fixed
 
 - **Four documented JSON-typed query params are now actually

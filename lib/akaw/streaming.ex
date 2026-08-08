@@ -259,7 +259,7 @@ defmodule Akaw.Streaming do
   # deliberately NOT here: streaming/feed requests never retry (see the
   # module comment), and `split_req_opts/1` rejects it loudly rather
   # than letting it leak into the query string.
-  @req_opt_keys [:receive_timeout, :pool_timeout, :connect_options]
+  @req_opt_keys [:receive_timeout, :pool_timeout]
 
   @doc """
   Split a flat opts keyword into `{req_opts, couchdb_opts}`, pulling out
@@ -268,10 +268,11 @@ defmodule Akaw.Streaming do
   streaming entry point — reduce wrappers, lazy streams, and the
   feed-mode endpoints via `held_open_feed_opts/2`.
 
-  `:receive_timeout`, `:connect_options`, and `:retry` ride to Req
-  through its option passthrough. `:pool_timeout` is folded into
-  Req 0.7's `finch: [...]` keyword by `Akaw.Request`, which keeps the
-  flat spelling here warning-free.
+  `:receive_timeout` rides to Req through its option passthrough.
+  `:pool_timeout` is folded into Req 0.7's `finch: [...]` keyword by
+  `Akaw.Request`, which keeps the flat spelling here warning-free.
+  Connection-level options (TLS, proxy) are not per-call — configure a
+  named Finch pool and pass it via `Akaw.new(finch: ...)`.
   """
   @spec split_req_opts(keyword()) :: {keyword(), keyword()}
   def split_req_opts(opts) when is_list(opts) do

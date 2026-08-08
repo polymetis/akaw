@@ -59,8 +59,8 @@ defmodule Akaw.Find do
   The reducer returns `{:cont, acc}` to continue or `{:halt, acc}` to
   stop early. Returns `{:ok, final_acc}` or `{:error, %Akaw.Error{}}`.
 
-  `opts` accepts the transport escape hatches `:receive_timeout`,
-  `:pool_timeout`, and `:connect_options` (forwarded through Req);
+  `opts` accepts the transport escape hatches `:receive_timeout` and
+  `:pool_timeout` (forwarded through Req);
   `retry:` raises — streaming requests never retry. Everything else is
   ignored (Mango doesn't take query params besides the body).
 

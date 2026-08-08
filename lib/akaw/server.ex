@@ -113,8 +113,8 @@ defmodule Akaw.Server do
 
   Held-open feeds get the transport's `:receive_timeout` defaulted to
   cover the server's quiet window, exactly as `Akaw.Changes.get/3`
-  documents; `:receive_timeout` / `:pool_timeout` / `:connect_options`
-  route to the transport rather than the query string. Held-open feeds
+  documents; `:receive_timeout` / `:pool_timeout` route to the
+  transport rather than the query string. Held-open feeds
   never retry (`retry:` raises).
 
   > #### Streaming feeds {: .warning}

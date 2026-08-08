@@ -69,9 +69,44 @@ defmodule AkawTest do
       refute inspect(client) =~ "s3cr3t-cookie"
     end
 
-    test "hides auth passed through req_options" do
-      client = Akaw.new(base_url: "http://x", req_options: [auth: {:bearer, "token-in-opts"}])
-      refute inspect(client) =~ "token-in-opts"
+    test "auth can no longer be smuggled through req_options at all" do
+      # This used to pin that a secret passed via req_options was at
+      # least redacted from inspect output. The narrowed allowlist
+      # supersedes redaction with prevention: the key is rejected at
+      # construction, so the secret never enters through that door.
+      assert_raise ArgumentError, ~r/unknown key\(s\) in :req_options.*:auth/s, fn ->
+        Akaw.new(base_url: "http://x", req_options: [auth: {:bearer, "token-in-opts"}])
+      end
+    end
+
+    test "req_options rejects unknown keys with the named allowlist" do
+      error =
+        assert_raise ArgumentError, fn ->
+          Akaw.new(base_url: "http://x", req_options: [connect_options: [timeout: 500]])
+        end
+
+      # The connect_options rejection must teach the replacement: a
+      # named Finch pool carrying the connection options.
+      assert error.message =~ "Finch"
+      assert error.message =~ "transport_opts"
+    end
+
+    test "req_options accepts the full named allowlist" do
+      client =
+        Akaw.new(
+          base_url: "http://x",
+          req_options: [
+            receive_timeout: 30_000,
+            pool_timeout: 500,
+            retry: false,
+            retry_delay: 10,
+            compressed: false,
+            headers: [{"x-extra", "1"}],
+            plug: fn conn -> Req.Test.json(conn, %{}) end
+          ]
+        )
+
+      assert Keyword.get(client.req_options, :receive_timeout) == 30_000
     end
 
     test "hides credentials embedded in base_url" do
