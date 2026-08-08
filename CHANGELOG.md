@@ -130,6 +130,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configured on a named Finch pool passed via `:finch` — the error
   message and docs carry the copy-pasteable supervision snippet.
 
+- **One JSON parser, and it's the runtime's.** All request bodies and
+  response decoding now go through the OTP-native `JSON` module; Jason
+  no longer executes for akaw's requests (it remains in the dependency
+  tree only because Req requires it — until the transport swap removes
+  both). Motivation, all measured: the two parsers agreed on every
+  probed edge-case *value* but produced entirely different exception
+  types and diagnostics on failure — the split-brain landed exactly on
+  the debugging path; native is faster on every CouchDB-shaped workload
+  (1.17–1.99x, widest on doc-laden pages and inline attachments); and
+  one parser means one error struct — decode failures now carry
+  `%JSON.DecodeError{}` in `body.exception` (was `%Jason.DecodeError{}`).
+  Wire shape is unchanged: `content-type`/`accept` are set exactly as
+  before.
+
+  Two migration notes. Encoding now dispatches through the stdlib
+  `JSON.Encoder` protocol, not `Jason.Encoder`: a struct that only
+  carries a `Jason.Encoder` implementation (`@derive Jason.Encoder` on
+  your doc structs, `Decimal` < 2.3) raises `Protocol.UndefinedError`
+  at request-build time — derive or implement `JSON.Encoder` instead
+  (Elixir's calendar types are covered out of the box). And the decoder
+  hook replaces Req's default `[:json, :json_api]` pair, so an
+  attachment stored as `application/vnd.api+json` comes back as raw
+  bytes rather than auto-decoded — consistent with the archive
+  content-type posture above; CouchDB's own API always answers
+  `application/json`.
+
 ### Fixed
 
 - **Four documented JSON-typed query params are now actually

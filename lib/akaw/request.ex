@@ -72,13 +72,21 @@ defmodule Akaw.Request do
       #
       # It rides in the base list (not after the merges) so a caller can
       # still override it per-client or per-call with `compressed: false`.
-      compressed: true
+      compressed: true,
+      # Response JSON decodes with the OTP-native JSON module, not Req's
+      # Jason default — one parser in the app, one error struct, and the
+      # faster one on CouchDB-shaped payloads (measured 1.17-1.99x).
+      # Note this REPLACES Req's default [:json, :json_api] decoder
+      # pair: application/vnd.api+json (reachable only via an attachment
+      # stored with that type) now comes back as raw bytes.
+      decoders: [json: &decode_json_native/1]
     ]
     |> apply_auth(client.auth)
     |> apply_finch(client.finch)
     |> Keyword.merge(req_options)
     |> Keyword.merge(opts)
     |> check_body_method!()
+    |> encode_json_body()
     |> normalize_finch()
     |> Req.new()
   end
@@ -119,6 +127,48 @@ defmodule Akaw.Request do
       {[], _} -> opts
       {flat, rest} -> Keyword.update(rest, :finch, flat, &Keyword.merge(&1, flat))
     end
+  end
+
+  # Bodies are encoded by akaw with the OTP-native JSON module rather
+  # than by Req's encode_body step (which hard-codes Jason). Runs after
+  # check_body_method! so the GET+body guard still names the :json
+  # spelling the caller used, and mirrors Req's own header behavior:
+  # content-type/accept are set only if the caller didn't set them.
+  defp encode_json_body(opts) do
+    case Keyword.pop(opts, :json) do
+      {nil, opts} ->
+        opts
+
+      {data, opts} ->
+        headers =
+          opts
+          |> Keyword.get(:headers, [])
+          |> put_new_header("content-type", "application/json")
+          |> put_new_header("accept", "application/json")
+
+        opts
+        |> Keyword.put(:body, JSON.encode_to_iodata!(data))
+        |> Keyword.put(:headers, headers)
+    end
+  end
+
+  defp put_new_header(headers, name, value) do
+    if Enum.any?(headers, fn {header_name, _} -> String.downcase(header_name) == name end) do
+      headers
+    else
+      headers ++ [{name, value}]
+    end
+  end
+
+  # The wrapper is load-bearing: bare JSON.decode/1 returns an {:error,
+  # tuple}, which Req's run_decoder wraps in a generic %RuntimeError{} —
+  # and a corrupt 200 body would then misclassify as a transport error,
+  # the exact retry-forever hazard classify_error exists to prevent.
+  # Rescuing decode!/1 hands Req a real exception struct instead.
+  defp decode_json_native(body) do
+    {:ok, JSON.decode!(body)}
+  rescue
+    exception in JSON.DecodeError -> {:error, exception}
   end
 
   # Req option keys that end up setting `%Req.Request{}.body`.
@@ -206,11 +256,12 @@ defmodule Akaw.Request do
   # fails JSON decoding is not a network problem — a caller following
   # the documented "branch on body.exception, retry transport errors"
   # pattern would spin forever on a permanently corrupt endpoint (a
-  # proxy truncating responses, a misbehaving middlebox). Req decodes
-  # with Jason, so that's the struct to catch; anything else really is
+  # proxy truncating responses, a misbehaving middlebox). akaw decodes
+  # with the OTP-native JSON module via the decoders hook, so
+  # %JSON.DecodeError{} is the struct to catch; anything else really is
   # transport. The streaming path already tags its own decode failures
   # "stream_decode_error".
-  defp classify_error(%Jason.DecodeError{} = exception) do
+  defp classify_error(%JSON.DecodeError{} = exception) do
     %Error{
       status: nil,
       error: "decode_error",

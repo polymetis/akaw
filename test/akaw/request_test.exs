@@ -169,6 +169,54 @@ defmodule Akaw.RequestTest do
       assert :counters.get(calls, 1) == 2
     end
 
+    test "json: bodies carry content-type and accept, encoded by the native JSON module" do
+      # akaw translates json: to a native-encoded body itself rather
+      # than letting Req's Jason-backed encode_body step run — mirroring
+      # Req's header behavior (both put-new) so the wire shape is
+      # unchanged.
+      test = self()
+
+      plug = fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+
+        send(test, %{
+          content_type: Plug.Conn.get_req_header(conn, "content-type"),
+          accept: Plug.Conn.get_req_header(conn, "accept"),
+          body: body
+        })
+
+        Req.Test.json(conn, %{"ok" => true})
+      end
+
+      assert {:ok, _} =
+               Request.request(client_with(plug), :post, "/db", json: %{a: 1, b: [true, nil]})
+
+      assert_receive %{
+        content_type: ["application/json"],
+        accept: ["application/json"],
+        body: body
+      }
+
+      assert JSON.decode!(body) == %{"a" => 1, "b" => [true, nil]}
+    end
+
+    test "a caller-supplied content-type is not clobbered by the json translation" do
+      test = self()
+
+      plug = fn conn ->
+        send(test, {:content_type, Plug.Conn.get_req_header(conn, "content-type")})
+        Req.Test.json(conn, %{"ok" => true})
+      end
+
+      assert {:ok, _} =
+               Request.request(client_with(plug), :post, "/db",
+                 json: %{a: 1},
+                 headers: [{"content-type", "application/json; charset=utf-8"}]
+               )
+
+      assert_receive {:content_type, ["application/json; charset=utf-8"]}
+    end
+
     test "transport exceptions are wrapped into %Akaw.Error{status: nil}" do
       plug = fn conn -> Req.Test.transport_error(conn, :econnrefused) end
       client = client_with(plug)
@@ -195,7 +243,7 @@ defmodule Akaw.RequestTest do
 
       assert err.status == nil
       assert err.error == "decode_error"
-      assert %Jason.DecodeError{} = err.body.exception
+      assert %JSON.DecodeError{} = err.body.exception
     end
 
     test "Akaw.Error.message/1 for transport errors shows 'Akaw transport_error: ...'" do
