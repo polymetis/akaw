@@ -61,13 +61,106 @@ defmodule Akaw.Request do
     [
       method: method,
       url: client.base_url <> path,
-      headers: headers
+      headers: headers,
+      # Req 0.6.1 made decompression opt-in, so without this akaw stopped
+      # negotiating gzip and started pulling attachments uncompressed —
+      # measured at 38x more bytes on the wire for a text/plain attachment
+      # against CouchDB 3.5.1. Req's reason for the new default is
+      # decompression-bomb DoS from arbitrary internet endpoints; akaw
+      # only ever talks to the CouchDB you pointed it at, so opting back
+      # in is the right default here. Please don't "fix" this back.
+      #
+      # It rides in the base list (not after the merges) so a caller can
+      # still override it per-client or per-call with `compressed: false`.
+      compressed: true
     ]
     |> apply_auth(client.auth)
     |> apply_finch(client.finch)
     |> Keyword.merge(req_options)
     |> Keyword.merge(opts)
+    |> check_body_method!()
+    |> normalize_finch()
     |> Req.new()
+  end
+
+  # Req 0.7 moved the Finch knobs behind a `finch: [...]` keyword and
+  # deprecated the flat spellings, emitting an IO.warn *per request* —
+  # measured at ~0.3ms each, which roughly doubled akaw's client-side
+  # per-request cost for anyone using a named pool.
+  #
+  # akaw keeps its friendly flat public API (`Akaw.new(finch: MyApp.Finch)`,
+  # `pool_timeout: 5_000`) and translates here instead. This runs last, after
+  # the req_options and per-call merges, so it also catches a `:finch` a
+  # caller set directly through `:req_options`.
+  #
+  # `:receive_timeout` and `:connect_options` are NOT deprecated and stay
+  # flat — don't "helpfully" fold those in too.
+  defp normalize_finch(opts) do
+    opts
+    |> normalize_finch_name()
+    |> fold_finch_request_opts()
+  end
+
+  defp normalize_finch_name(opts) do
+    case Keyword.get(opts, :finch) do
+      nil -> opts
+      name when is_atom(name) -> Keyword.put(opts, :finch, name: name)
+      _already_keyword -> opts
+    end
+  end
+
+  # `:pool_timeout` belongs inside `finch: [...]` now — except alongside
+  # `:connect_options`, where Req raises if `:finch` is present at all
+  # (`finch.ex`: "cannot set both :finch and :connect_options"). There we
+  # leave it flat and let Req's deprecation warning stand, rather than
+  # turning a warning into a crash.
+  defp fold_finch_request_opts(opts) do
+    if Keyword.has_key?(opts, :connect_options) do
+      opts
+    else
+      case Keyword.split(opts, [:pool_timeout]) do
+        {[], _} -> opts
+        {flat, rest} -> Keyword.update(rest, :finch, flat, &Keyword.merge(&1, flat))
+      end
+    end
+  end
+
+  # Req option keys that end up setting `%Req.Request{}.body`.
+  @body_opts [:json, :body, :form, :form_multipart]
+
+  # Req 0.7's `encode_body` step silently rewrites a GET carrying a body
+  # into a POST. For a CouchDB client that is never the right answer: a
+  # `_rewrite` rule pinned to `"method": "GET"` stops matching and 404s,
+  # and a `_show`/`_list` function branching on `req.method` quietly
+  # takes the other branch without erroring at all.
+  #
+  # So akaw decides its own verb rather than inheriting Req's. Every
+  # akaw-internal body-bearing call already pins an explicit `:post` or
+  # `:put`; the only way to reach this is a caller passing `method: :get`
+  # to `DesignDoc.Shows/Lists/Rewrites/Updates`, which the first three
+  # already document as "only meaningful for `:post`".
+  defp check_body_method!(opts) do
+    if Keyword.get(opts, :method) == :get do
+      case Enum.find(@body_opts, &(Keyword.get(opts, &1) != nil)) do
+        nil -> opts
+        key -> raise ArgumentError, body_method_message(key)
+      end
+    else
+      opts
+    end
+  end
+
+  defp body_method_message(key) do
+    """
+    cannot send a request body with `method: :get` — Req would silently \
+    rewrite the request to POST, changing which CouchDB handler runs.
+
+    Got `#{inspect(key)}` alongside `method: :get`.
+
+    Either pass `method: :post` (what the `:body` option is documented for), \
+    or pass the method as a string — `method: "GET"` — if you really do want \
+    a GET that carries a body, which CouchDB accepts and akaw sends verbatim.\
+    """
   end
 
   defp combine_headers(lists) do

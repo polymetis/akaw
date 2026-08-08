@@ -31,7 +31,8 @@ defmodule Akaw.DesignDoc.Shows do
     * `:doc_id` — invoke the show against a specific document
       (`_show/{func}/{docid}`) rather than `_show/{func}`
     * `:method` — `:get` (default) or `:post`
-    * `:body` — request body (only meaningful for `:post`)
+    * `:body` — request body (only meaningful for `:post`; passing one with
+      `method: :get` raises `ArgumentError`)
     * `:params` — query-string parameters forwarded verbatim
   """
   @spec call(Client.t(), String.t(), String.t(), String.t(), keyword()) ::

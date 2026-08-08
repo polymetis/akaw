@@ -110,11 +110,7 @@ defmodule Akaw.Streaming do
             {chunks, %{state | finished: finished?}}
 
           {:error, reason} ->
-            raise %Error{
-              status: nil,
-              error: "stream_transport_error",
-              reason: inspect(reason)
-            }
+            raise stream_transport_error(reason)
 
           :unknown ->
             next_chunk(state)
@@ -127,6 +123,25 @@ defmodule Akaw.Streaming do
           reason: "no data received within #{state.idle_timeout}ms"
         }
     end
+  end
+
+  # `Req.parse_message/2` hands back the raw transport exception without
+  # running Req's own error normalization, so the struct depends on the
+  # Finch version — Finch 0.23 wraps Mint's error, turning
+  # `%Mint.TransportError{reason: :closed}` into
+  # `%Finch.TransportError{reason: :closed, source: %Mint.TransportError{...}}`.
+  # `inspect/1`-ing that leaked the difference straight into the documented
+  # `:reason` string. `Exception.message/1` is stable across both ("socket
+  # closed"), and stashing the struct in `:body` matches what `Akaw.Error`'s
+  # moduledoc already promises for transport failures — and what the
+  # non-streaming path has always done.
+  defp stream_transport_error(reason) do
+    %Error{
+      status: nil,
+      error: "stream_transport_error",
+      reason: if(is_exception(reason), do: Exception.message(reason), else: inspect(reason)),
+      body: %{exception: reason}
+    }
   end
 
   defp collect_chunks(parts) do
@@ -214,8 +229,13 @@ defmodule Akaw.Streaming do
   @doc """
   Split a `reduce_while` opts keyword into `{req_opts, couchdb_opts}`,
   pulling out the small set of Finch/Mint transport options we let
-  callers override per call — they ride to Finch via Req's option
-  passthrough (everything else is destined for query params).
+  callers override per call (everything else is destined for query
+  params).
+
+  `:receive_timeout` and `:connect_options` ride to Finch through Req's
+  option passthrough. `:pool_timeout` is folded into Req 0.7's
+  `finch: [...]` keyword by `Akaw.Request`, which keeps the flat spelling
+  here warning-free.
   """
   @spec split_req_opts(keyword()) :: {keyword(), keyword()}
   def split_req_opts(opts) when is_list(opts) do
@@ -485,8 +505,11 @@ defmodule Akaw.Streaming do
 
   defp feed_lines([line | rest], acc, reducer) do
     case reducer.(line, acc) do
-      {:cont, new_acc} -> feed_lines(rest, new_acc, reducer)
-      {:halt, new_acc} -> {:halt, new_acc}
+      {:cont, new_acc} ->
+        feed_lines(rest, new_acc, reducer)
+
+      {:halt, new_acc} ->
+        {:halt, new_acc}
 
       other ->
         raise ArgumentError,
@@ -498,8 +521,11 @@ defmodule Akaw.Streaming do
 
   defp feed_items([item | rest], acc, reducer) do
     case reducer.(item, acc) do
-      {:cont, new_acc} -> feed_items(rest, new_acc, reducer)
-      {:halt, new_acc} -> {:halt, new_acc}
+      {:cont, new_acc} ->
+        feed_items(rest, new_acc, reducer)
+
+      {:halt, new_acc} ->
+        {:halt, new_acc}
 
       other ->
         raise ArgumentError,
@@ -511,8 +537,11 @@ defmodule Akaw.Streaming do
 
   defp flush_tail_line(tail, acc, reducer) do
     case reducer.(tail, acc) do
-      {:cont, new_acc} -> new_acc
-      {:halt, new_acc} -> new_acc
+      {:cont, new_acc} ->
+        new_acc
+
+      {:halt, new_acc} ->
+        new_acc
 
       other ->
         raise ArgumentError,

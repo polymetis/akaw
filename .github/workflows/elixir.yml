@@ -1,0 +1,78 @@
+name: Elixir CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: ubuntu-latest
+
+    services:
+      # Akaw is a CouchDB client, so the integration tests are the ones that
+      # actually prove anything. Running a real CouchDB here is the whole
+      # point of this workflow — the unit suite mocks the transport and can
+      # be green while the wire behaviour is wrong.
+      #
+      # Credentials match the defaults in test/support/akaw/integration_helpers.ex
+      # (AKAW_TEST_URL / AKAW_TEST_USER / AKAW_TEST_PASS override them).
+      couchdb:
+        image: couchdb:3.5
+        ports: ['5984:5984']
+        env:
+          COUCHDB_USER: admin
+          COUCHDB_PASSWORD: password
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          version-file: .tool-versions
+          version-type: strict
+
+      - name: Restore dependencies cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-
+
+      - name: Install dependencies
+        run: |
+          mix local.rebar --force
+          mix local.hex --force
+          MIX_ENV=test mix deps.get
+          MIX_ENV=test mix deps.compile
+
+      - name: Check formatting
+        run: mix format --check-formatted
+
+      - name: Compile without warnings
+        run: MIX_ENV=test mix compile --force --warnings-as-errors
+
+      - name: Wait for CouchDB
+        # The service container reports healthy as soon as the port is bound,
+        # which is earlier than CouchDB will answer an authenticated request.
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS -u admin:password http://localhost:5984/_up >/dev/null; then
+              echo "CouchDB up after ${i}s"
+              curl -s -u admin:password http://localhost:5984/ | head -c 200; echo
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "CouchDB never came up" >&2
+          exit 1
+
+      - name: Run tests
+        # --max-cases 4 is deliberate, not timidity: at the default (2x cores)
+        # the concurrent authenticated requests trip CouchDB 3.5's lockout and
+        # the run drowns in spurious 401s.
+        run: mix test --include integration --max-cases 4

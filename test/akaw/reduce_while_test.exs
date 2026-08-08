@@ -2,10 +2,7 @@ defmodule Akaw.ReduceWhileTest do
   use ExUnit.Case, async: true
 
   # Unit tests for the synchronous, backpressured `reduce_while` callback
-  # API across the streaming endpoints. Req's :plug adapter delivers the
-  # whole response body to our `into: fun` collector in a single chunk,
-  # so chunk-boundary behavior (line splitting across chunks, etc.) is
-  # exercised against real CouchDB in test/integration. Here we cover:
+  # API across the streaming endpoints. We cover:
   #
   #   * request shape (method, path, params, body) per endpoint
   #   * the reducer is called with each parsed item / line
@@ -13,6 +10,13 @@ defmodule Akaw.ReduceWhileTest do
   #   * HTTP non-2xx is returned as `{:error, %Akaw.Error{}}`
   #   * the calling process's mailbox is *not* drained — the documented
   #     win over the lazy `stream/N` variants
+  #   * chunk boundaries, including a line split mid-token
+  #
+  # That last one is only possible from a plug as of Req 0.7, whose plug
+  # adapter delivers each `Plug.Conn.chunk/2` to the `into: fun` collector
+  # separately instead of buffering the whole body into one chunk. The
+  # equivalent tests in test/integration exercise the same paths against
+  # boundaries a real CouchDB chose.
 
   defp pretty_rows(rows, container \\ "rows") do
     body = Enum.map_join(rows, ",\n", &Jason.encode!/1)
@@ -262,6 +266,76 @@ defmodule Akaw.ReduceWhileTest do
     end
   end
 
+  describe "chunk boundaries" do
+    # Splits the payload at arbitrary byte offsets and sends each piece as
+    # its own HTTP chunk. Req 0.7's plug adapter passes them through
+    # individually, so the reducers' buffering has to do real work.
+    defp chunked_plug(body, split_at) do
+      fn conn ->
+        conn = Plug.Conn.send_chunked(conn, 200)
+
+        body
+        |> split_binary(split_at)
+        |> Enum.reduce(conn, fn piece, conn ->
+          {:ok, conn} = Plug.Conn.chunk(conn, piece)
+          conn
+        end)
+      end
+    end
+
+    defp split_binary(binary, offsets) do
+      {pieces, rest, _} =
+        Enum.reduce(offsets, {[], binary, 0}, fn offset, {acc, rest, taken} ->
+          take = offset - taken
+          <<piece::binary-size(^take), tail::binary>> = rest
+          {[piece | acc], tail, offset}
+        end)
+
+      Enum.reverse([rest | pieces])
+    end
+
+    test "reduce_lines_while reassembles a line split mid-token across chunks" do
+      body = ~s({"seq":"1","id":"doc_a"}\n{"seq":"2","id":"doc_b"}\n)
+
+      # Land the boundaries inside a key and inside a value, so a naive
+      # per-chunk split would produce garbage rather than two clean lines.
+      client = client_with(chunked_plug(body, [10, 30, 44]))
+
+      assert {:ok, ids} =
+               Akaw.Changes.reduce_while(client, "db", [], fn change, acc ->
+                 {:cont, [change["id"] | acc]}
+               end)
+
+      assert Enum.reverse(ids) == ["doc_a", "doc_b"]
+    end
+
+    test "reduce_items_while reassembles a JSON row split across chunks" do
+      body =
+        ~s({"total_rows":2,"offset":0,"rows":[\n{"id":"a","key":"a"},\n{"id":"b","key":"b"}\n]})
+
+      client = client_with(chunked_plug(body, [12, 41, 55, 70]))
+
+      assert {:ok, ids} =
+               Akaw.Documents.reduce_while_all_docs(client, "db", [], fn row, acc ->
+                 {:cont, [row["id"] | acc]}
+               end)
+
+      assert Enum.reverse(ids) == ["a", "b"]
+    end
+
+    test "a single-byte-per-chunk trickle still parses" do
+      body = ~s({"seq":"1","id":"only"}\n)
+      client = client_with(chunked_plug(body, Enum.to_list(1..(byte_size(body) - 1))))
+
+      assert {:ok, ids} =
+               Akaw.Changes.reduce_while(client, "db", [], fn change, acc ->
+                 {:cont, [change["id"] | acc]}
+               end)
+
+      assert ids == ["only"]
+    end
+  end
+
   describe "Akaw.Changes.reduce_while/5" do
     test "reduces over line-delimited change objects" do
       client =
@@ -333,7 +407,13 @@ defmodule Akaw.ReduceWhileTest do
 
       plug = fn conn ->
         {:ok, body, _} = Plug.Conn.read_body(conn)
-        send(test, %{method: conn.method, path: conn.request_path, qs: conn.query_string, body: body})
+
+        send(test, %{
+          method: conn.method,
+          path: conn.request_path,
+          qs: conn.query_string,
+          body: body
+        })
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")

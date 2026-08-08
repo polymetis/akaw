@@ -20,6 +20,22 @@ defmodule Akaw.SessionServerTest do
     {plug, counter}
   end
 
+  # Same as `counting_session_plug/0`, but also tells `test_pid` about every
+  # call, so a test can wait for the Nth refresh instead of sleeping and
+  # hoping. The SessionServer runs the request itself, so the message comes
+  # from its process — the test just receives.
+  defp announcing_session_plug(test_pid) do
+    {plug, counter} = counting_session_plug()
+
+    announcing = fn conn ->
+      conn = plug.(conn)
+      send(test_pid, {:session_refresh, :counters.get(counter, 1)})
+      conn
+    end
+
+    {announcing, counter}
+  end
+
   defp start_server(plug, opts \\ []) do
     base_opts = [
       name: :"akaw_session_test_#{System.unique_integer([:positive])}",
@@ -68,19 +84,24 @@ defmodule Akaw.SessionServerTest do
     assert {"cookie", "AuthSession=tok_4"} in client.headers
   end
 
-  test "scheduled refresh fires after the configured interval" do
-    {plug, counter} = counting_session_plug()
-    # 100ms interval — plenty short for tests
-    pid = start_server(plug, refresh_interval: 100)
+  test "scheduled refresh keeps firing on the configured interval" do
+    # Deliberately not `Process.sleep(n)` + "did enough refreshes happen by
+    # now?". That asks the scheduler for a throughput guarantee it does not
+    # give: under a loaded `mix test` the timer and the sleep both slip, and
+    # the assertion fails while the behaviour under test is perfectly fine.
+    #
+    # What we actually care about is that refreshes keep arriving. So the
+    # plug announces each one and we wait for them — `assert_receive` blocks
+    # only as long as it needs to, and its timeout is a ceiling on failure
+    # rather than a stopwatch on success.
+    {plug, _counter} = announcing_session_plug(self())
+    pid = start_server(plug, refresh_interval: 50)
 
-    assert :counters.get(counter, 1) == 1
-    Process.sleep(350)
+    assert_receive {:session_refresh, 1}, 1_000
+    assert_receive {:session_refresh, 2}, 1_000
+    assert_receive {:session_refresh, 3}, 1_000
 
-    # By 350ms we should have had the initial login plus at least 2-3
-    # scheduled refreshes (allowing for jitter).
-    assert :counters.get(counter, 1) >= 3
-
-    # Server is still alive and serving the latest client
+    # Still alive, and serving the cookie from the most recent refresh.
     client = Akaw.SessionServer.client(pid)
     assert {"cookie", _} = List.keyfind(client.headers, "cookie", 0)
   end

@@ -98,6 +98,69 @@ defmodule Akaw.RequestTest do
       assert Exception.message(err) =~ "missing"
     end
 
+    test "requests negotiate compression and decode a gzipped response body" do
+      test = self()
+
+      plug = fn conn ->
+        send(test, {:accept_encoding, Plug.Conn.get_req_header(conn, "accept-encoding")})
+
+        conn
+        |> Plug.Conn.put_resp_header("content-encoding", "gzip")
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, :zlib.gzip(~s({"ok":true})))
+      end
+
+      assert {:ok, %{"ok" => true}} = Request.request(client_with(plug), :get, "/")
+
+      # Req 0.6.1 made this opt-in; Akaw.Request opts back in, so CouchDB
+      # still gets asked for gzip and the body still arrives decoded rather
+      # than as a raw compressed binary.
+      assert_receive {:accept_encoding, [encodings]}
+      assert encodings =~ "gzip"
+    end
+
+    test "a caller can still turn compression off per call" do
+      test = self()
+
+      plug = fn conn ->
+        send(test, {:accept_encoding, Plug.Conn.get_req_header(conn, "accept-encoding")})
+        Req.Test.json(conn, %{})
+      end
+
+      assert {:ok, _} = Request.request(client_with(plug), :get, "/", compressed: false)
+      assert_receive {:accept_encoding, []}
+    end
+
+    test "a flat :pool_timeout is folded into finch: [...] rather than deprecated" do
+      plug = fn conn -> Req.Test.json(conn, %{}) end
+
+      stderr =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert {:ok, _} =
+                   Request.request(client_with(plug), :get, "/", pool_timeout: 5_000)
+        end)
+
+      refute stderr =~ "deprecated"
+    end
+
+    test ":pool_timeout stays flat alongside :connect_options, where Req would raise" do
+      # Req raises "cannot set both :finch and :connect_options" if :finch is
+      # present at all, so folding here would turn a warning into a crash.
+      # We keep the warning instead. Documented, deliberate corner.
+      plug = fn conn -> Req.Test.json(conn, %{}) end
+
+      stderr =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert {:ok, _} =
+                   Request.request(client_with(plug), :get, "/",
+                     connect_options: [timeout: 1_000],
+                     pool_timeout: 5_000
+                   )
+        end)
+
+      assert stderr =~ "pool_timeout" and stderr =~ "deprecated"
+    end
+
     test "transport exceptions are wrapped into %Akaw.Error{status: nil}" do
       plug = fn conn -> Req.Test.transport_error(conn, :econnrefused) end
       client = client_with(plug)

@@ -50,8 +50,15 @@ defmodule Akaw.Integration.ReplicationTest do
       end
     end)
 
-    # Wait for the doc to land in target
-    assert :ok = wait_for_doc(client, target, "doc1", 10_000)
+    # Wait for the doc to land in target. On failure, say *why* — the
+    # replicator resolves `source`/`target` server-side, so "the doc never
+    # arrived" has two very different causes: the URL is not reachable from
+    # where CouchDB runs, or the job simply has not been scheduled yet.
+    # `_scheduler/docs` distinguishes them.
+    assert :ok == wait_for_doc(client, target, "doc1", 30_000),
+           "replication never delivered doc1.\n" <>
+             "  scheduler: #{inspect(replication_state(client, repl_id))}\n" <>
+             "  source/target URL given to CouchDB: #{build_authed_url(client, source)}"
 
     # Status should be reachable
     assert {:ok, %{"doc_id" => ^repl_id}} = Akaw.Replication.status(client, repl_id)
@@ -68,6 +75,13 @@ defmodule Akaw.Integration.ReplicationTest do
     user = System.get_env("AKAW_TEST_USER", "admin")
     pass = System.get_env("AKAW_TEST_PASS", "password")
     "#{uri.scheme}://#{user}:#{pass}@#{uri.host}:#{uri.port}/#{db}"
+  end
+
+  defp replication_state(client, repl_id) do
+    case Akaw.Replication.status(client, repl_id) do
+      {:ok, doc} -> Map.take(doc, ["state", "error_count", "info", "last_updated"])
+      other -> other
+    end
   end
 
   defp wait_for_doc(client, db, id, timeout_ms) do

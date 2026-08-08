@@ -102,7 +102,10 @@ defmodule Akaw.Attachment do
           {:ok, map()} | {:error, term()}
   def delete(%Client{} = client, db, doc_id, att_name, rev, opts \\ [])
       when is_binary(db) and is_binary(doc_id) and is_binary(att_name) and is_binary(rev) do
-    Request.request(client, :delete, path(db, doc_id, att_name), params: [rev: rev] ++ opts)
+    # Keyword.put, not [rev: rev] ++ opts — see Akaw.Document.delete/5 for why.
+    Request.request(client, :delete, path(db, doc_id, att_name),
+      params: Keyword.put(opts, :rev, rev)
+    )
   end
 
   defp path(db, doc_id, att_name) do

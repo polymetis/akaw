@@ -55,4 +55,12 @@ defmodule Akaw.DesignDoc.ListsTest do
     assert_receive %{method: "POST", body: body}
     assert Jason.decode!(body) == %{"filter" => "x"}
   end
+
+  test "call/6 refuses a body on the default :get method", %{client: client} do
+    # Req 0.7 would rewrite this to POST, so a list function branching on
+    # req.method would quietly take the other branch.
+    assert_raise ArgumentError, ~r/cannot send a request body with `method: :get`/, fn ->
+      Akaw.DesignDoc.Lists.call(client, "db", "d", "fmt", "v", body: %{filter: "x"})
+    end
+  end
 end
