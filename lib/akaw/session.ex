@@ -34,7 +34,7 @@ defmodule Akaw.Session do
   See <https://docs.couchdb.org/en/latest/api/server/authn.html>.
   """
 
-  alias Akaw.{Client, Error, Request}
+  alias Akaw.{Client, Error, Request, Response}
 
   @auth_session_re ~r/AuthSession=([^;]+)/
 
@@ -61,7 +61,7 @@ defmodule Akaw.Session do
            json: %{name: name, password: password},
            return: :response
          ) do
-      {:ok, %Req.Response{body: body} = resp} ->
+      {:ok, %Response{body: body} = resp} ->
         case extract_auth_session(resp) do
           nil -> {:ok, client, body}
           cookie -> {:ok, with_cookie(client, cookie), body}
@@ -165,9 +165,9 @@ defmodule Akaw.Session do
     }
   end
 
-  defp extract_auth_session(%Req.Response{} = resp) do
+  defp extract_auth_session(%Response{} = resp) do
     resp
-    |> Req.Response.get_header("set-cookie")
+    |> Response.get_header("set-cookie")
     |> Enum.find_value(fn cookie ->
       case Regex.run(@auth_session_re, cookie) do
         [_, value] -> value

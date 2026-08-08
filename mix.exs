@@ -70,7 +70,7 @@ defmodule Akaw.MixProject do
       # and flat, so grouping by API section is the only way the sidebar
       # stays navigable.
       groups_for_modules: [
-        Core: [Akaw, Akaw.Client, Akaw.Error],
+        Core: [Akaw, Akaw.Client, Akaw.Error, Akaw.Response],
         "Databases & documents": [
           Akaw.Database,
           Akaw.Document,

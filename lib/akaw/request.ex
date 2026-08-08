@@ -1,7 +1,7 @@
 defmodule Akaw.Request do
   @moduledoc false
 
-  alias Akaw.{Client, Error}
+  alias Akaw.{Client, Error, Response}
 
   # Standard HTTP method atoms accepted by Finch, plus a binary escape hatch
   # for non-standard verbs like "COPY" (CouchDB document copy).
@@ -15,9 +15,9 @@ defmodule Akaw.Request do
   ## Internal options
 
     * `:return` — `:body` (default) returns `{:ok, decoded_body}`;
-      `:response` returns `{:ok, %Req.Response{}}` so callers can inspect
+      `:response` returns `{:ok, %Akaw.Response{}}` so callers can inspect
       headers and status (used by `Akaw.Session` to capture the `AuthSession`
-      cookie).
+      cookie and `Akaw.Attachment` for content-type/ETag).
 
   Headers from `client.headers`, `client.req_options[:headers]`, and per-call
   `opts[:headers]` are concatenated in that order. If the same header name
@@ -27,7 +27,7 @@ defmodule Akaw.Request do
   Any other options are forwarded to `Req.new/1`.
   """
   @spec request(Client.t(), method(), String.t(), keyword()) ::
-          {:ok, term()} | {:ok, Req.Response.t()} | {:error, Error.t() | Exception.t()}
+          {:ok, term()} | {:ok, Response.t()} | {:error, Error.t() | Exception.t()}
   def request(%Client{} = client, method, path, opts \\ []) do
     {return_kind, opts} = Keyword.pop(opts, :return, :body)
 
@@ -186,8 +186,16 @@ defmodule Akaw.Request do
        when status in 200..299 do
     case return_kind do
       :body -> {:ok, resp.body}
-      :response -> {:ok, resp}
+      :response -> {:ok, to_akaw_response(resp)}
     end
+  end
+
+  # The one place a transport response crosses into the rest of the
+  # library: everything outside this module sees %Akaw.Response{}, so a
+  # transport change stays contained here.
+  defp to_akaw_response(%Req.Response{status: status, headers: headers, body: body}) do
+    flat = for {name, values} <- headers, value <- values, do: {name, value}
+    %Response{status: status, headers: flat, body: body}
   end
 
   defp handle_response({:ok, %Req.Response{status: status, body: body}}, _return_kind),
