@@ -41,8 +41,11 @@ defmodule Akaw.ReduceWhileTest do
     end
   end
 
+  # No `retry: false` here — streaming paths default retry off themselves
+  # (see "Retry: off by default" in Akaw.Streaming). This helper carrying
+  # no opt-out is part of the proof.
   defp client_with(plug) do
-    Akaw.new(base_url: "http://x", req_options: [plug: plug, retry: false])
+    Akaw.new(base_url: "http://x", req_options: [plug: plug])
   end
 
   defp error_client(status, body) do
@@ -584,6 +587,8 @@ defmodule Akaw.ReduceWhileTest do
     # The helper that splits Req-level options out of an otherwise-CouchDB
     # opts keyword. Lives on Akaw.Streaming because it's shared by every
     # reduce_while wrapper.
+    defp bare_client, do: Akaw.new(base_url: "http://x")
+
     test "split_req_opts/1 pulls out :receive_timeout, :pool_timeout, :connect_options" do
       {req, rest} =
         Akaw.Streaming.split_req_opts(
@@ -602,34 +607,107 @@ defmodule Akaw.ReduceWhileTest do
       refute Keyword.has_key?(rest, :receive_timeout)
     end
 
-    test "default_receive_timeout/2 honors an explicit receive_timeout" do
-      req = Akaw.Streaming.default_receive_timeout([receive_timeout: 9_999], heartbeat: 30_000)
+    test "default_receive_timeout/3 honors an explicit per-call receive_timeout" do
+      req =
+        Akaw.Streaming.default_receive_timeout(bare_client(), [receive_timeout: 9_999],
+          heartbeat: 30_000
+        )
+
       assert Keyword.get(req, :receive_timeout) == 9_999
     end
 
-    test "default_receive_timeout/2 derives 2x heartbeat when not set" do
-      req = Akaw.Streaming.default_receive_timeout([], heartbeat: 30_000)
+    test "held_open_feed_opts/2 derives only for held-open feeds" do
+      # feed "normal" (or absent) answers immediately — the transport
+      # default is fine there and must not be touched.
+      {req_normal, _} = Akaw.Streaming.held_open_feed_opts(bare_client(), since: "now")
+      refute Keyword.has_key?(req_normal, :receive_timeout)
+
+      {req_longpoll, params} =
+        Akaw.Streaming.held_open_feed_opts(bare_client(), feed: "longpoll", timeout: 30_000)
+
+      assert Keyword.get(req_longpoll, :receive_timeout) == 35_000
+      assert Keyword.get(params, :feed) == "longpoll"
+
+      {req_explicit, _} =
+        Akaw.Streaming.held_open_feed_opts(bare_client(),
+          feed: "longpoll",
+          receive_timeout: 9_999
+        )
+
+      assert Keyword.get(req_explicit, :receive_timeout) == 9_999
+    end
+
+    test "default_receive_timeout/3 stands down for a client-level receive_timeout" do
+      # Per-call opts merge after client req_options in Request.build/4,
+      # so a derived value placed per-call would silently override the
+      # client-level setting — hitting the exact users who worked around
+      # the old 15s death with Akaw.new(req_options: [receive_timeout: ...]).
+      client = Akaw.new(base_url: "http://x", req_options: [receive_timeout: 30_000])
+
+      req = Akaw.Streaming.default_receive_timeout(client, [], heartbeat: 30_000)
+      refute Keyword.has_key?(req, :receive_timeout)
+    end
+
+    test "default_receive_timeout/3 derives 2x heartbeat when not set" do
+      req = Akaw.Streaming.default_receive_timeout(bare_client(), [], heartbeat: 30_000)
       assert Keyword.get(req, :receive_timeout) == 60_000
     end
 
-    test "default_receive_timeout/2 picks 120s when heartbeat=true / \"true\" (server picks interval)" do
-      req_true = Akaw.Streaming.default_receive_timeout([], heartbeat: true)
-      req_str = Akaw.Streaming.default_receive_timeout([], heartbeat: "true")
+    test "default_receive_timeout/3 picks 120s when heartbeat=true / \"true\" (server picks interval)" do
+      req_true = Akaw.Streaming.default_receive_timeout(bare_client(), [], heartbeat: true)
+      req_str = Akaw.Streaming.default_receive_timeout(bare_client(), [], heartbeat: "true")
 
       assert Keyword.get(req_true, :receive_timeout) == 120_000
       assert Keyword.get(req_str, :receive_timeout) == 120_000
     end
 
-    test "default_receive_timeout/2 ignores heartbeat: 0 (no timeout set)" do
-      assert Akaw.Streaming.default_receive_timeout([], heartbeat: 0) == []
+    # Without a usable heartbeat, CouchDB still answers a quiet feed by
+    # :timeout (server default 60s) — longer than Finch's default 15s
+    # receive timeout, which used to kill every legitimately quiet feed
+    # client-side. The derivation covers the server's window plus 5s
+    # delivery slack.
+    test "default_receive_timeout/3 covers the server window when heartbeat is 0" do
+      req = Akaw.Streaming.default_receive_timeout(bare_client(), [], heartbeat: 0)
+      assert Keyword.get(req, :receive_timeout) == 65_000
     end
 
-    test "default_receive_timeout/2 ignores negative heartbeat" do
-      assert Akaw.Streaming.default_receive_timeout([], heartbeat: -1_000) == []
+    test "default_receive_timeout/3 covers the server window for negative heartbeat" do
+      req = Akaw.Streaming.default_receive_timeout(bare_client(), [], heartbeat: -1_000)
+      assert Keyword.get(req, :receive_timeout) == 65_000
     end
 
-    test "default_receive_timeout/2 ignores when no heartbeat at all" do
-      assert Akaw.Streaming.default_receive_timeout([], []) == []
+    test "default_receive_timeout/3 covers the server window with no heartbeat at all" do
+      req = Akaw.Streaming.default_receive_timeout(bare_client(), [], [])
+      assert Keyword.get(req, :receive_timeout) == 65_000
+    end
+
+    test "default_receive_timeout/3 treats numeric-string params like integers" do
+      # CouchDB accepts heartbeat: "30000" exactly like 30_000 — the
+      # string spelling must not silently fall through to the 65s
+      # default and undercut a longer server window.
+      req_hb = Akaw.Streaming.default_receive_timeout(bare_client(), [], heartbeat: "30000")
+      assert Keyword.get(req_hb, :receive_timeout) == 60_000
+
+      req_t = Akaw.Streaming.default_receive_timeout(bare_client(), [], timeout: "90000")
+      assert Keyword.get(req_t, :receive_timeout) == 95_000
+
+      req_garbage = Akaw.Streaming.default_receive_timeout(bare_client(), [], heartbeat: "soon")
+      assert Keyword.get(req_garbage, :receive_timeout) == 65_000
+    end
+
+    test "default_receive_timeout/3 derives from an explicit :timeout param" do
+      req = Akaw.Streaming.default_receive_timeout(bare_client(), [], timeout: 90_000)
+      assert Keyword.get(req, :receive_timeout) == 95_000
+    end
+
+    test "default_receive_timeout/3 prefers heartbeat over :timeout (heartbeat overrides it server-side)" do
+      req =
+        Akaw.Streaming.default_receive_timeout(bare_client(), [],
+          heartbeat: 30_000,
+          timeout: 90_000
+        )
+
+      assert Keyword.get(req, :receive_timeout) == 60_000
     end
 
     # The behavioral assertion: receive_timeout MUST NOT leak into the
@@ -801,6 +879,159 @@ defmodule Akaw.ReduceWhileTest do
       assert_received :alpha
       assert_received {:beta, 42}
       assert_received :gamma
+    end
+  end
+
+  describe "retry" do
+    # Req's default retry (:safe_transient) re-runs the whole request
+    # after a transient failure — which, on a streaming path, resets the
+    # private accumulator and feeds every row to the reducer a second
+    # time. {:ok, final_acc} must mean "each row delivered once", so the
+    # streaming paths pin retry: false unless someone explicitly opts in.
+    defp flaky_once_plug(calls) do
+      rows_plug = pretty_plug([%{"id" => "a"}])
+
+      fn conn ->
+        :counters.add(calls, 1, 1)
+
+        case :counters.get(calls, 1) do
+          1 -> Plug.Conn.send_resp(conn, 503, "unavailable")
+          _ -> rows_plug.(conn)
+        end
+      end
+    end
+
+    test "a transient-looking failure is not retried: it surfaces, once" do
+      calls = :counters.new(1, [])
+      client = Akaw.new(base_url: "http://x", req_options: [plug: flaky_once_plug(calls)])
+
+      assert {:error, %Akaw.Error{status: 503}} =
+               Akaw.Documents.reduce_while_all_docs(client, "db", [], fn row, acc ->
+                 {:cont, [row | acc]}
+               end)
+
+      assert :counters.get(calls, 1) == 1
+    end
+
+    test "lazy row streams route per-call transport opts too" do
+      # The same intent-inversion existed on the row streams: :retry (or
+      # :receive_timeout) passed to stream_all_docs leaked into the query
+      # string and the streaming default pinned retry off anyway.
+      plug = fn conn ->
+        Process.put(:akaw_row_stream_qs, conn.query_string)
+        pretty_plug([%{"id" => "a"}]).(conn)
+      end
+
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+
+      assert [%{"id" => "a"}] =
+               client
+               |> Akaw.Documents.stream_all_docs("db",
+                 limit: 10,
+                 retry: false,
+                 receive_timeout: 90_000
+               )
+               |> Enum.to_list()
+
+      qs = Process.get(:akaw_row_stream_qs) || ""
+      assert qs =~ "limit=10"
+      refute qs =~ "retry"
+      refute qs =~ "receive_timeout"
+    end
+
+    @tag :capture_log
+    test "a per-call retry opt-in routes to the transport and is respected" do
+      # The whole opt-in has to survive two hazards: :retry must be
+      # routed out of the CouchDB params (or it becomes ?retry=... and
+      # CouchDB ignores it), and default_retry_off/2 must see it and
+      # stand down. Getting either wrong silently inverts the caller's
+      # intent.
+      test = self()
+      calls = :counters.new(1, [])
+      inner = flaky_once_plug(calls)
+
+      plug = fn conn ->
+        send(test, {:qs, conn.query_string})
+        inner.(conn)
+      end
+
+      client =
+        Akaw.new(base_url: "http://x", req_options: [plug: plug, retry_delay: fn _ -> 0 end])
+
+      assert {:ok, [%{"id" => "a"}]} =
+               Akaw.Documents.reduce_while_all_docs(
+                 client,
+                 "db",
+                 [],
+                 fn row, acc -> {:cont, [row | acc]} end,
+                 retry: :safe_transient
+               )
+
+      assert :counters.get(calls, 1) == 2
+      assert_receive {:qs, qs}
+      refute qs =~ "retry"
+    end
+
+    test "an explicit client-level retry opt-in is respected" do
+      # Opting in means opting into re-delivery — but it must remain
+      # possible for idempotent reducers that prefer the restart.
+      calls = :counters.new(1, [])
+
+      client =
+        Akaw.new(
+          base_url: "http://x",
+          req_options: [
+            plug: flaky_once_plug(calls),
+            retry: :safe_transient,
+            retry_delay: fn _ -> 0 end
+          ]
+        )
+
+      assert {:ok, [%{"id" => "a"}]} =
+               Akaw.Documents.reduce_while_all_docs(client, "db", [], fn row, acc ->
+                 {:cont, [row | acc]}
+               end)
+
+      assert :counters.get(calls, 1) == 2
+    end
+
+    test "reduce paths tag transport failures stream_transport_error" do
+      # One tag per API mode: every transport failure on a streaming
+      # call — open or mid-stream, reduce or lazy — reads the same.
+      # Previously this path said "transport_error" while the identical
+      # failure on the lazy path said "stream_transport_error".
+      plug = fn conn -> Req.Test.transport_error(conn, :econnrefused) end
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+
+      assert {:error, %Akaw.Error{status: nil, error: "stream_transport_error"} = error} =
+               Akaw.Documents.reduce_while_all_docs(client, "db", [], fn row, acc ->
+                 {:cont, [row | acc]}
+               end)
+
+      assert is_struct(error.body.exception)
+    end
+
+    test "the lazy chunks path raises stream_transport_error on open failure" do
+      plug = fn conn -> Req.Test.transport_error(conn, :econnrefused) end
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+
+      error =
+        assert_raise Akaw.Error, fn ->
+          client |> Akaw.Changes.stream("db") |> Enum.take(1)
+        end
+
+      assert error.error == "stream_transport_error"
+    end
+
+    test "the lazy chunks path is not retried either" do
+      calls = :counters.new(1, [])
+      client = Akaw.new(base_url: "http://x", req_options: [plug: flaky_once_plug(calls)])
+
+      assert_raise Akaw.Error, ~r/503/, fn ->
+        client |> Akaw.Changes.stream("db") |> Enum.take(1)
+      end
+
+      assert :counters.get(calls, 1) == 1
     end
   end
 end

@@ -60,13 +60,20 @@ defmodule Akaw.Documents do
   Memory-bounded: the parser only buffers one row at a time, so this is
   safe for arbitrarily large databases.
 
-  Errors raise during enumeration — `Akaw.Error` for HTTP non-2xx, the
-  underlying exception for transport failures.
+  Errors raise during enumeration as `Akaw.Error` — HTTP non-2xx carries
+  CouchDB's status and error body; transport failures carry
+  `error: "stream_transport_error"` with the underlying exception in
+  `body.exception`.
   """
   @spec stream_all_docs(Client.t(), String.t(), keyword()) :: Enumerable.t(map())
   def stream_all_docs(%Client{} = client, db, opts \\ []) when is_binary(db) do
-    Streaming.chunks(client, :get, "/#{Path.encode(db)}/_all_docs",
-      params: Params.encode_json_keys(opts)
+    {req_opts, couchdb_opts} = Streaming.split_req_opts(opts)
+
+    Streaming.chunks(
+      client,
+      :get,
+      "/#{Path.encode(db)}/_all_docs",
+      [params: Params.encode_json_keys(couchdb_opts)] ++ req_opts
     )
     |> JsonItemStream.items()
   end
@@ -76,8 +83,13 @@ defmodule Akaw.Documents do
   """
   @spec stream_design_docs(Client.t(), String.t(), keyword()) :: Enumerable.t(map())
   def stream_design_docs(%Client{} = client, db, opts \\ []) when is_binary(db) do
-    Streaming.chunks(client, :get, "/#{Path.encode(db)}/_design_docs",
-      params: Params.encode_json_keys(opts)
+    {req_opts, couchdb_opts} = Streaming.split_req_opts(opts)
+
+    Streaming.chunks(
+      client,
+      :get,
+      "/#{Path.encode(db)}/_design_docs",
+      [params: Params.encode_json_keys(couchdb_opts)] ++ req_opts
     )
     |> JsonItemStream.items()
   end

@@ -6,7 +6,7 @@ defmodule Akaw.Error do
   struct so callers have a single shape to pattern-match on. Stream
   consumers see the same struct raised from inside enumeration.
 
-  Four kinds of failure all funnel through `%Akaw.Error{}`:
+  The failure shapes:
 
     * **HTTP non-2xx** — `status` is the HTTP code, `error` and `reason`
       come from CouchDB's JSON body when present, `body` is the decoded
@@ -16,6 +16,14 @@ defmodule Akaw.Error do
       `nil`, `error` is `"transport_error"`, `reason` is the underlying
       exception's message, `body` is `%{exception: original_exception}`
       so you can re-examine the raw Mint/Finch error if needed.
+
+    * **Decode failures** — a 2xx response whose body failed JSON
+      decoding (a proxy truncating responses, a misbehaving middlebox):
+      `status` is `nil`, `error` is `"decode_error"`, `body` is
+      `%{exception: e}`. Distinct from transport precisely so that
+      retry-on-transport-error logic doesn't spin on a corrupt
+      endpoint. The streaming equivalent is `"stream_decode_error"`
+      below.
 
     * **Stream failures** — `status` is `nil`, `error` is one of
       `"stream_idle_timeout"`, `"stream_transport_error"`,

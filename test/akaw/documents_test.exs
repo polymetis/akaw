@@ -111,7 +111,7 @@ defmodule Akaw.DocumentsTest do
         Req.Test.json(conn, %{})
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug, retry: false])
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
 
       try do
         client |> Akaw.Documents.stream_all_docs("mydb", startkey: "u_") |> Enum.take(1)
@@ -135,7 +135,7 @@ defmodule Akaw.DocumentsTest do
         Req.Test.json(conn, %{})
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug, retry: false])
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
 
       try do
         client |> Akaw.Documents.stream_design_docs("mydb") |> Enum.take(1)

@@ -90,11 +90,13 @@ defmodule Akaw.Partition do
   @spec stream_all_docs(Client.t(), String.t(), String.t(), keyword()) :: Enumerable.t(map())
   def stream_all_docs(%Client{} = client, db, partition, opts \\ [])
       when is_binary(db) and is_binary(partition) do
+    {req_opts, couchdb_opts} = Streaming.split_req_opts(opts)
+
     Streaming.chunks(
       client,
       :get,
       "/#{Path.encode(db)}/_partition/#{Path.encode(partition)}/_all_docs",
-      params: Params.encode_json_keys(opts)
+      [params: Params.encode_json_keys(couchdb_opts)] ++ req_opts
     )
     |> JsonItemStream.items()
   end
@@ -106,11 +108,13 @@ defmodule Akaw.Partition do
           Enumerable.t(map())
   def stream_view(%Client{} = client, db, partition, ddoc, view, opts \\ [])
       when is_binary(db) and is_binary(partition) and is_binary(ddoc) and is_binary(view) do
+    {req_opts, couchdb_opts} = Streaming.split_req_opts(opts)
+
     Streaming.chunks(
       client,
       :get,
       "/#{Path.encode(db)}/_partition/#{Path.encode(partition)}/_design/#{Path.encode(ddoc)}/_view/#{Path.encode(view)}",
-      params: Params.encode_json_keys(opts)
+      [params: Params.encode_json_keys(couchdb_opts)] ++ req_opts
     )
     |> JsonItemStream.items()
   end

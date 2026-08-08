@@ -50,6 +50,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   raw bytes for those, which is what its documentation always said it did.
   JSON attachments are still decoded.
 
+- **All transport failures on streaming calls now carry
+  `error: "stream_transport_error"`.** The tag used to depend on which
+  phase and flavor failed: a connect failure opening a lazy `stream/N`,
+  or any transport failure on a `reduce_while` call, was tagged plain
+  `"transport_error"`, while a mid-stream failure on the lazy path said
+  `"stream_transport_error"` — the same physical event reading
+  differently across API flavors. Now it's one tag per API mode:
+  streaming calls always say `"stream_transport_error"`, non-streaming
+  calls say `"transport_error"` (or `"decode_error"` — see Fixed). If you
+  matched `"transport_error"` from `reduce_while` results, update the
+  pattern.
+
 - **Streaming transport failures report a stable `:reason`.**
   `%Akaw.Error{error: "stream_transport_error"}` previously carried an
   `inspect/1` dump of the underlying exception struct in `:reason`, which
@@ -86,6 +98,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged.
 
 ### Fixed
+
+- **Quiet longpoll and continuous feeds no longer die at the transport's
+  15-second receive timeout.** CouchDB legitimately holds a quiet feed
+  open until `:timeout` (server default 60s) — or indefinitely with a
+  heartbeat — while Finch's default `receive_timeout` is 15s, so
+  `Akaw.Changes.get(client, db, feed: "longpoll")` on a quiet database
+  *always* failed client-side (and, with retry, took ~67 seconds and four
+  abandoned server-side connections to do it). Held-open feeds now
+  default `:receive_timeout` to cover the server's window: `heartbeat * 2`
+  for an integer heartbeat, 120s for a server-picked one, otherwise
+  `:timeout` + 5s slack. This applies to every held-open entry point:
+  `Akaw.Changes.get/3`/`post/4` with longpoll/continuous/eventsource
+  feeds, the lazy `Changes.stream/3`/`stream_post/4`,
+  `Akaw.Server.db_updates/2`/`stream_db_updates/2`, and the
+  `reduce_while` continuous wrappers (which previously only derived from
+  `:heartbeat`). The non-reduce entry points also now route
+  `:receive_timeout` / `:pool_timeout` / `:connect_options` to the
+  transport instead of the query string. An explicit `:receive_timeout`
+  always wins — per call or per client `req_options`.
+
+  Note on `_db_updates`: CouchDB's documentation describes its
+  `:timeout` in seconds, but the implementation (verified empirically
+  against CouchDB 3.5) takes milliseconds, same as `_changes` — a quiet
+  `_db_updates` longpoll answers at the same 60s default window.
+
+- **A fully minified response now raises the promised
+  `stream_format_error` instead of silently streaming zero items.** The
+  item streamer's documented defense against minifying proxies only fired
+  for garbage *inside* a row array whose opener sat on its own line. The
+  common minification case — the whole body collapsed onto one line —
+  never entered the array at all, so `stream_all_docs/3` and the
+  `reduce_while` variants completed cleanly with zero rows from a 200
+  that contained data. Rows inlined with their array opener (`[{`) now
+  raise the documented diagnostic from the seek state. A legitimately
+  empty inline array (`"rows":[]`) still streams zero items.
+
+- **A 2xx response with a corrupt JSON body is now a `"decode_error"`,
+  not a `"transport_error"`.** Req reports JSON decode failures through
+  the same error channel as network failures, and Akaw wrapped them all
+  with the tag its own docs define as "DNS, connection refused, timeout" —
+  so a caller following the documented branch-on-`body.exception` retry
+  pattern would loop forever against a permanently corrupt endpoint
+  (a proxy truncating responses, say). Non-streaming decode failures now
+  carry `error: "decode_error"` with the codec exception in
+  `body.exception`, mirroring the streaming path's existing
+  `"stream_decode_error"`.
+
+- **Streaming requests no longer inherit Req's automatic retry.** Req's
+  default `retry: :safe_transient` re-runs the whole request after a
+  transient failure (a 5xx, a dropped connection, a receive timeout). On
+  the streaming paths — `stream/N`, `reduce_while/N`, and friends — the
+  rows consumed before the failure had already been delivered, and the
+  retried attempt reset the internal accumulator and delivered them all
+  again: a mid-feed disconnect during `reduce_while_all_docs` over a
+  million rows silently re-ran the reducer from row one with the
+  accumulator wiped, and a node restart mid-`_changes` re-delivered
+  already-processed changes. Streaming requests now pin `retry: false`;
+  `{:ok, final_acc}` means every row was delivered exactly once. An
+  explicit `:retry` (per call or per client `req_options`) is respected
+  for reducers that prefer restart-from-scratch over failing.
+  Non-streaming requests keep Req's default retry.
 
 - **A `password_fn` that raises or exits during a scheduled refresh no
   longer crash-loops `Akaw.SessionServer`.** The `:password` option is

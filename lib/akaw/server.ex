@@ -104,7 +104,16 @@ defmodule Akaw.Server do
 
     * `:feed` — `"normal"` (default), `"longpoll"`, `"continuous"`,
       `"eventsource"`
-    * `:timeout`, `:heartbeat`, `:since` — passed through as query params
+    * `:timeout`, `:heartbeat`, `:since` — passed through as query params.
+      Note: CouchDB's docs describe `_db_updates`' `:timeout` in seconds,
+      but CouchDB 3.5 takes milliseconds, same as `_changes` (verified
+      empirically — `timeout=3000` holds a quiet longpoll for 3s,
+      `timeout=3` returns immediately).
+
+  Held-open feeds get the transport's `:receive_timeout` defaulted to
+  cover the server's quiet window, exactly as `Akaw.Changes.get/3`
+  documents; `:receive_timeout` / `:pool_timeout` / `:connect_options` /
+  `:retry` route to the transport rather than the query string.
 
   > #### Streaming feeds {: .warning}
   >
@@ -115,7 +124,8 @@ defmodule Akaw.Server do
   """
   @spec db_updates(Client.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def db_updates(%Client{} = client, opts \\ []) do
-    Request.request(client, :get, "/_db_updates", params: opts)
+    {req_opts, params} = Akaw.Streaming.held_open_feed_opts(client, opts)
+    Request.request(client, :get, "/_db_updates", [params: params] ++ req_opts)
   end
 
   @doc """
@@ -133,11 +143,13 @@ defmodule Akaw.Server do
   """
   @spec stream_db_updates(Client.t(), keyword()) :: Enumerable.t(map())
   def stream_db_updates(%Client{} = client, opts \\ []) do
-    params = Keyword.put(opts, :feed, "continuous")
+    {req_opts, couchdb_opts} = Akaw.Streaming.split_req_opts(opts)
+    params = Keyword.put(couchdb_opts, :feed, "continuous")
+    req_opts = Akaw.Streaming.default_receive_timeout(client, req_opts, params)
 
-    Akaw.Streaming.chunks(client, :get, "/_db_updates", params: params)
+    Akaw.Streaming.chunks(client, :get, "/_db_updates", [params: params] ++ req_opts)
     |> Akaw.LineStream.lines()
-    |> Stream.map(&JSON.decode!/1)
+    |> Stream.map(&Akaw.Streaming.decode_feed_line!/1)
   end
 
   @doc """
@@ -146,10 +158,14 @@ defmodule Akaw.Server do
   safe from a GenServer / LiveView (no mailbox involvement).
 
   Like `Akaw.Changes.reduce_while/5`, `:receive_timeout` defaults to
-  `heartbeat * 2` if you pass an integer `:heartbeat` and don't set
-  `:receive_timeout` yourself. Explicit `:receive_timeout` always wins.
+  cover CouchDB's legitimate quiet window — `heartbeat * 2` for an
+  integer `:heartbeat`, 120s for a server-picked one, otherwise the
+  feed's `:timeout` (milliseconds, server default 60s) plus slack. An
+  explicit `:receive_timeout` (per call or per client) always wins.
 
-  Returns `{:ok, final_acc}` or `{:error, %Akaw.Error{}}`.
+  Returns `{:ok, final_acc}` or `{:error, %Akaw.Error{}}`. A feed line
+  that fails to decode raises `%Akaw.Error{error: "stream_decode_error"}`
+  out of the reducer loop.
   """
   @spec reduce_while_db_updates(
           Client.t(),
@@ -167,7 +183,7 @@ defmodule Akaw.Server do
     end
 
     {req_opts, couchdb_opts} = Akaw.Streaming.split_req_opts(opts)
-    req_opts = Akaw.Streaming.default_receive_timeout(req_opts, couchdb_opts)
+    req_opts = Akaw.Streaming.default_receive_timeout(client, req_opts, couchdb_opts)
     params = Keyword.put(couchdb_opts, :feed, "continuous")
 
     Akaw.Streaming.reduce_lines_while(
@@ -176,7 +192,7 @@ defmodule Akaw.Server do
       "/_db_updates",
       [params: params] ++ req_opts,
       acc,
-      fn line, a -> reducer.(JSON.decode!(line), a) end
+      fn line, a -> reducer.(Akaw.Streaming.decode_feed_line!(line), a) end
     )
   end
 

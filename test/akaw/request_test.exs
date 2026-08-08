@@ -161,6 +161,32 @@ defmodule Akaw.RequestTest do
       assert stderr =~ "pool_timeout" and stderr =~ "deprecated"
     end
 
+    @tag :capture_log
+    test "non-streaming requests keep Req's default retry" do
+      # The streaming paths pin retry: false (delivery-once); complete
+      # single-shot responses are idempotent to retry, so the plain
+      # request path deliberately keeps Req's :safe_transient default.
+      calls = :counters.new(1, [])
+
+      plug = fn conn ->
+        :counters.add(calls, 1, 1)
+
+        case :counters.get(calls, 1) do
+          1 -> Plug.Conn.send_resp(conn, 503, "unavailable")
+          _ -> Req.Test.json(conn, %{"ok" => true})
+        end
+      end
+
+      client =
+        Akaw.new(
+          base_url: "http://couch.example",
+          req_options: [plug: plug, retry_delay: fn _ -> 0 end]
+        )
+
+      assert {:ok, %{"ok" => true}} = Request.request(client, :get, "/")
+      assert :counters.get(calls, 1) == 2
+    end
+
     test "transport exceptions are wrapped into %Akaw.Error{status: nil}" do
       plug = fn conn -> Req.Test.transport_error(conn, :econnrefused) end
       client = client_with(plug)
@@ -170,6 +196,24 @@ defmodule Akaw.RequestTest do
       assert err.error == "transport_error"
       assert err.reason =~ "connection refused" or err.reason =~ "econnrefused"
       assert is_struct(err.body.exception)
+    end
+
+    test "a 200 with a corrupt JSON body is a decode_error, not a transport_error" do
+      # A proxy truncating the response mid-body. Tagging this
+      # "transport_error" sent the documented retry-on-transport pattern
+      # into a loop against a permanently corrupt endpoint.
+      plug = fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, ~s|{"total_rows": 3, "rows": [{"id|)
+      end
+
+      assert {:error, %Akaw.Error{} = err} =
+               Request.request(client_with(plug), :get, "/db/_all_docs")
+
+      assert err.status == nil
+      assert err.error == "decode_error"
+      assert %Jason.DecodeError{} = err.body.exception
     end
 
     test "Akaw.Error.message/1 for transport errors shows 'Akaw transport_error: ...'" do

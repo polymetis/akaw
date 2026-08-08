@@ -194,7 +194,27 @@ defmodule Akaw.Request do
     do: {:error, build_error(status, body)}
 
   defp handle_response({:error, exception}, _return_kind),
-    do: {:error, Error.wrap_transport(exception)}
+    do: {:error, classify_error(exception)}
+
+  # Req's decode_body step returns codec exceptions through the same
+  # {:error, exception} channel as transport failures. A 200 whose body
+  # fails JSON decoding is not a network problem — a caller following
+  # the documented "branch on body.exception, retry transport errors"
+  # pattern would spin forever on a permanently corrupt endpoint (a
+  # proxy truncating responses, a misbehaving middlebox). Req decodes
+  # with Jason, so that's the struct to catch; anything else really is
+  # transport. The streaming path already tags its own decode failures
+  # "stream_decode_error".
+  defp classify_error(%Jason.DecodeError{} = exception) do
+    %Error{
+      status: nil,
+      error: "decode_error",
+      reason: Exception.message(exception),
+      body: %{exception: exception}
+    }
+  end
+
+  defp classify_error(exception), do: Error.wrap_transport(exception)
 
   defp build_error(status, %{"error" => error, "reason" => reason} = body) do
     %Error{status: status, error: error, reason: reason, body: body}

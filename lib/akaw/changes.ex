@@ -50,10 +50,26 @@ defmodule Akaw.Changes do
     * `:filter`, `:doc_ids` (short lists), `:view`
     * `:style` — `"main_only"` (default) or `"all_docs"`
     * `:seq_interval`
+
+  ## Longpoll and the receive timeout
+
+  With `feed: "longpoll"` CouchDB holds the response until a change
+  arrives or `:timeout` (milliseconds, server default 60s) elapses —
+  longer than the transport's default 15s receive timeout, which would
+  kill every quiet longpoll client-side before the server could answer.
+  For any held-open feed, `get/3` defaults the transport's
+  `:receive_timeout` to cover the server's window: `heartbeat * 2` for
+  an integer `:heartbeat`, 120s for a server-picked one
+  (`heartbeat: true`), otherwise `:timeout` plus slack.
+
+  `:receive_timeout` / `:pool_timeout` / `:connect_options` / `:retry`
+  in `opts` route to the transport rather than the query string; an
+  explicit `:receive_timeout` always wins.
   """
   @spec get(Client.t(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def get(%Client{} = client, db, opts \\ []) when is_binary(db) do
-    Request.request(client, :get, "/#{Path.encode(db)}/_changes", params: opts)
+    {req_opts, params} = split_feed_opts(client, opts)
+    Request.request(client, :get, "/#{Path.encode(db)}/_changes", [params: params] ++ req_opts)
   end
 
   @doc """
@@ -65,14 +81,21 @@ defmodule Akaw.Changes do
 
       Akaw.Changes.post(client, "users", %{doc_ids: ids},
         filter: "_doc_ids", since: "now")
+
+  Held-open feeds get the same `:receive_timeout` defaulting as `get/3`
+  (see "Longpoll and the receive timeout" there).
   """
   @spec post(Client.t(), String.t(), map(), keyword()) ::
           {:ok, map()} | {:error, term()}
   def post(%Client{} = client, db, body, opts \\ [])
       when is_binary(db) and is_map(body) do
-    Request.request(client, :post, "/#{Path.encode(db)}/_changes",
-      json: body,
-      params: opts
+    {req_opts, params} = split_feed_opts(client, opts)
+
+    Request.request(
+      client,
+      :post,
+      "/#{Path.encode(db)}/_changes",
+      [json: body, params: params] ++ req_opts
     )
   end
 
@@ -102,10 +125,13 @@ defmodule Akaw.Changes do
 
   ## Errors
 
-  Errors raise during enumeration:
+  Errors raise during enumeration, always as `Akaw.Error`:
 
-    * `Akaw.Error` for HTTP non-2xx responses (e.g. 404 missing db)
-    * Mint/Finch transport exceptions on network failure
+    * HTTP non-2xx (e.g. 404 missing db) — CouchDB's status and error body
+    * transport failures — `error: "stream_transport_error"`, with the
+      underlying Mint/Finch exception in `body.exception`
+    * a corrupt feed line — `error: "stream_decode_error"` with the
+      offending line excerpted in `:reason`
 
   > #### Backpressure & mailbox ownership {: .warning}
   >
@@ -123,11 +149,11 @@ defmodule Akaw.Changes do
   """
   @spec stream(Client.t(), String.t(), keyword()) :: Enumerable.t(map())
   def stream(%Client{} = client, db, opts \\ []) when is_binary(db) do
-    Streaming.chunks(client, :get, "/#{Path.encode(db)}/_changes",
-      params: continuous_params(opts)
-    )
+    {req_opts, params} = continuous_stream_opts(client, opts)
+
+    Streaming.chunks(client, :get, "/#{Path.encode(db)}/_changes", [params: params] ++ req_opts)
     |> LineStream.lines()
-    |> Stream.map(&JSON.decode!/1)
+    |> Stream.map(&Streaming.decode_feed_line!/1)
   end
 
   @doc """
@@ -137,12 +163,16 @@ defmodule Akaw.Changes do
   @spec stream_post(Client.t(), String.t(), map(), keyword()) :: Enumerable.t(map())
   def stream_post(%Client{} = client, db, body, opts \\ [])
       when is_binary(db) and is_map(body) do
-    Streaming.chunks(client, :post, "/#{Path.encode(db)}/_changes",
-      params: continuous_params(opts),
-      json: body
+    {req_opts, params} = continuous_stream_opts(client, opts)
+
+    Streaming.chunks(
+      client,
+      :post,
+      "/#{Path.encode(db)}/_changes",
+      [params: params, json: body] ++ req_opts
     )
     |> LineStream.lines()
-    |> Stream.map(&JSON.decode!/1)
+    |> Stream.map(&Streaming.decode_feed_line!/1)
   end
 
   @doc """
@@ -155,6 +185,9 @@ defmodule Akaw.Changes do
   `reducer` is called with each decoded change object. Return
   `{:cont, acc}` to keep reading or `{:halt, acc}` to close the
   connection. Returns `{:ok, final_acc}` or `{:error, %Akaw.Error{}}`.
+  One exception to the return-tuple contract: a feed line that fails to
+  decode raises `%Akaw.Error{error: "stream_decode_error"}` out of the
+  reducer loop, same as the lazy `stream/3`.
 
   ## Idle timeout
 
@@ -163,15 +196,28 @@ defmodule Akaw.Changes do
   and they'll be routed to the transport (Finch/Mint, via Req) instead
   of becoming query params.
 
-  Continuous feeds can sit silent for long stretches. If you pass an
-  integer `:heartbeat`, `:receive_timeout` defaults to `heartbeat * 2`
-  automatically — no spurious 15s timeouts from Finch's default. An
-  explicit `:receive_timeout` always wins.
+  Continuous feeds can sit silent for long stretches. `:receive_timeout`
+  defaults to cover CouchDB's legitimate quiet window — `heartbeat * 2`
+  if you pass an integer `:heartbeat`, otherwise the feed's `:timeout`
+  (milliseconds, server default 60s) plus slack — so Finch's 15s default
+  can't kill a healthy quiet feed. An explicit `:receive_timeout`
+  always wins.
 
       # heartbeat 30s → receive_timeout auto-set to 60s
       Akaw.Changes.reduce_while(client, "users", 0,
         fn _, n -> {:cont, n + 1} end,
         since: "now", heartbeat: 30_000)
+
+  ## Retry
+
+  Req's automatic retry is disabled on streaming paths: a mid-feed
+  transport failure surfaces as `{:error, %Akaw.Error{}}` rather than
+  transparently re-running the request — which would reset the
+  accumulator and feed every change to the reducer again. If your
+  reducer is idempotent and you'd rather have the restart, opt back in
+  per call (`retry: :safe_transient` in `opts`, routed to the transport
+  like `:receive_timeout`) or per client
+  (`Akaw.new(req_options: [retry: :safe_transient])`).
   """
   @spec reduce_while(
           Client.t(),
@@ -183,7 +229,7 @@ defmodule Akaw.Changes do
         when acc: term()
   def reduce_while(%Client{} = client, db, acc, reducer, opts \\ [])
       when is_binary(db) and is_function(reducer, 2) do
-    {req_opts, params_opts} = build_continuous_opts(opts)
+    {req_opts, params_opts} = build_continuous_opts(client, opts)
 
     Streaming.reduce_lines_while(
       client,
@@ -210,7 +256,7 @@ defmodule Akaw.Changes do
         when acc: term()
   def reduce_while_post(%Client{} = client, db, body, acc, reducer, opts \\ [])
       when is_binary(db) and is_map(body) and is_function(reducer, 2) do
-    {req_opts, params_opts} = build_continuous_opts(opts)
+    {req_opts, params_opts} = build_continuous_opts(client, opts)
 
     Streaming.reduce_lines_while(
       client,
@@ -222,15 +268,26 @@ defmodule Akaw.Changes do
     )
   end
 
-  defp build_continuous_opts(opts) do
+  defp build_continuous_opts(client, opts) do
     reject_feed_override!(opts)
     {req_opts, couchdb_opts} = Streaming.split_req_opts(opts)
     params_opts = continuous_params(couchdb_opts)
-    req_opts = Streaming.default_receive_timeout(req_opts, couchdb_opts)
+    req_opts = Streaming.default_receive_timeout(client, req_opts, couchdb_opts)
     {req_opts, params_opts}
   end
 
   defp continuous_params(opts), do: Keyword.put(opts, :feed, "continuous")
+
+  # The lazy streams force feed=continuous, so they always get the
+  # held-open receive-timeout defaulting — the mailbox idle_timeout in
+  # Streaming.chunks/4 is a separate, later line of defense.
+  defp continuous_stream_opts(client, opts) do
+    {req_opts, couchdb_opts} = Streaming.split_req_opts(opts)
+    params = continuous_params(couchdb_opts)
+    {Streaming.default_receive_timeout(client, req_opts, params), params}
+  end
+
+  defp split_feed_opts(client, opts), do: Streaming.held_open_feed_opts(client, opts)
 
   defp reject_feed_override!(opts) do
     if Keyword.has_key?(opts, :feed) do
@@ -242,6 +299,6 @@ defmodule Akaw.Changes do
   end
 
   defp decode_then(reducer) do
-    fn line, acc -> reducer.(JSON.decode!(line), acc) end
+    fn line, acc -> reducer.(Streaming.decode_feed_line!(line), acc) end
   end
 end

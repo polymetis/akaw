@@ -18,12 +18,12 @@ defmodule Akaw.JsonItemStream do
   # line that starts with `{` as a row (stripping a trailing comma), and
   # halt at the line that starts with `]`.
   #
-  # Defensive posture: if we see anything else inside the array — typically
-  # because an intermediary proxy minified the JSON and collapsed rows onto
-  # one line, or because CouchDB changed its output format — we raise an
-  # `%Akaw.Error{}` with a diagnostic, rather than letting `JSON.decode!`
-  # explode mid-stream with no context. Real SAX-style parsing is future
-  # work; today's failure mode is at least legible.
+  # Defensive posture: if we see anything else — rows inlined with their
+  # array opener while still seeking (full minification), or garbage
+  # inside the array — we raise an `%Akaw.Error{}` with a diagnostic,
+  # rather than letting `JSON.decode!` explode mid-stream with no context
+  # or, worse, completing cleanly with zero items. Real SAX-style parsing
+  # is future work; today's failure mode is at least legible.
   #
   # Tested against CouchDB 3.5 with empty arrays, single-row, and 500-row
   # responses.
@@ -48,10 +48,37 @@ defmodule Akaw.JsonItemStream do
   """
   @spec step(String.t(), state()) :: {[map()], state()}
   def step(line, :seek_array) do
-    if String.ends_with?(String.trim_trailing(line), "[") do
-      {[], :in_array}
-    else
-      {[], :seek_array}
+    trimmed = String.trim_trailing(line)
+
+    cond do
+      String.ends_with?(trimmed, "[") ->
+        {[], :in_array}
+
+      # Rows inlined after their array opener — the whole response
+      # collapsed onto one line, with or without whitespace between `[`
+      # and `{` (minifiers strip it, reflowing proxies may keep it).
+      # Without this check the opener never matches, the array is never
+      # entered, and a 200 full of rows completes as zero items: silent
+      # data loss where the module promises a legible diagnostic. An
+      # inline empty array (`"rows":[]`) never matches and stays valid —
+      # zero items is the right answer there. The pattern can't appear
+      # in a legitimate header line: before the row array opens, the
+      # line holds only scalar metadata (total_rows, offset).
+      String.match?(trimmed, ~r/\[\s*\{/) ->
+        raise %Error{
+          status: nil,
+          error: "stream_format_error",
+          reason:
+            "expected pretty-printed CouchDB response (array opener `[` " <>
+              "at end of line, one row per line after it). Got rows inlined " <>
+              "with the opener: " <>
+              inspect(String.slice(trimmed, 0, 120)) <>
+              ". If a proxy between you and CouchDB minifies responses, " <>
+              "use the non-streaming variant or disable minification."
+        }
+
+      true ->
+        {[], :seek_array}
     end
   end
 

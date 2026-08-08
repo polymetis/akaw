@@ -41,6 +41,80 @@ defmodule Akaw.ChangesTest do
       assert qs =~ "timeout=30000"
       assert qs =~ "include_docs=true"
     end
+
+    test "routes transport opts to the transport, not the query string", %{client: client} do
+      assert {:ok, _} =
+               Akaw.Changes.get(client, "mydb",
+                 feed: "longpoll",
+                 receive_timeout: 90_000,
+                 pool_timeout: 500
+               )
+
+      assert_receive %{path: "/mydb/_changes", query_string: qs}
+      assert qs == "feed=longpoll"
+    end
+  end
+
+  describe "feed line decoding" do
+    defp corrupt_line_plug do
+      fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, ~s|{"seq":"1-a","id":"ok"}\n{"seq": CORRUPT\n|)
+      end
+    end
+
+    test "stream/3 raises stream_decode_error on a corrupt line, not a bare JSON error" do
+      client = Akaw.new(base_url: "http://x", req_options: [plug: corrupt_line_plug()])
+
+      error =
+        assert_raise Akaw.Error, ~r/stream_decode_error|failed to decode/, fn ->
+          client |> Akaw.Changes.stream("db") |> Enum.to_list()
+        end
+
+      assert error.error == "stream_decode_error"
+    end
+
+    test "reduce_while/5 raises the same legible error for a corrupt line" do
+      client = Akaw.new(base_url: "http://x", req_options: [plug: corrupt_line_plug()])
+
+      error =
+        assert_raise Akaw.Error, fn ->
+          Akaw.Changes.reduce_while(client, "db", [], fn change, acc ->
+            {:cont, [change | acc]}
+          end)
+        end
+
+      assert error.error == "stream_decode_error"
+    end
+  end
+
+  describe "stream/3 transport opts" do
+    test "routes transport opts out of the query string" do
+      # The lazy continuous stream gets the same held-open
+      # receive-timeout defaulting as the reduce paths; a caller's
+      # :receive_timeout must reach the transport, not CouchDB.
+      #
+      # Process.put, not send: the lazy stream's unselective receive
+      # drains the test process's own mailbox during consumption — a
+      # message-based probe gets eaten by the very footgun the
+      # reduce_while docs warn about.
+      plug = fn conn ->
+        Process.put(:akaw_stream_opts_qs, conn.query_string)
+        Req.Test.json(conn, %{})
+      end
+
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+
+      client
+      |> Akaw.Changes.stream("mydb", since: "now", receive_timeout: 90_000)
+      |> Enum.take(1)
+
+      qs = Process.get(:akaw_stream_opts_qs) || ""
+      assert qs =~ "since=now"
+      assert qs =~ "feed=continuous"
+      refute qs =~ "receive_timeout"
+    end
   end
 
   describe "post/4" do
@@ -75,7 +149,7 @@ defmodule Akaw.ChangesTest do
         )
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug, retry: false])
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
 
       assert_raise Akaw.Error, ~r/404/, fn ->
         client |> Akaw.Changes.stream("missing") |> Enum.take(1)
@@ -94,7 +168,7 @@ defmodule Akaw.ChangesTest do
         Req.Test.json(conn, %{})
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug, retry: false])
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
 
       try do
         client
@@ -135,7 +209,7 @@ defmodule Akaw.ChangesTest do
         Req.Test.json(conn, %{})
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug, retry: false])
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
 
       try do
         client

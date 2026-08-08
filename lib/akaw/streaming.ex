@@ -18,6 +18,20 @@ defmodule Akaw.Streaming do
   #     calling process and (b) blocking in the reducer stalls socket
   #     reads and applies real TCP backpressure to CouchDB.
   #
+  # ## Retry: off by default, both flavors
+  #
+  # Req's default `retry: :safe_transient` re-runs the whole request after
+  # a transient failure. For a complete-response request that's a
+  # convenience; for a streaming request it's a correctness bug: with
+  # `into:` collectors the body consumed before the failure has already
+  # been fed to the caller (or their mailbox), and the retried attempt
+  # builds a fresh `%Req.Response{}` — the private accumulator resets to
+  # `init_acc` and every row is delivered again. `{:ok, final_acc}` must
+  # mean "each item was delivered exactly once", so streaming requests
+  # default `retry: false`. An explicit `:retry` (per call, or per client
+  # via `req_options`) is respected — opting in means opting into
+  # re-delivery.
+  #
   # ## chunks/4 — idle timeout
   #
   # `next_chunk/1` does a `receive` with an `after` clause keyed on the
@@ -39,17 +53,21 @@ defmodule Akaw.Streaming do
   #
   # ## chunks/4 — open errors
   #
-  # The `start_fun` raises:
+  # The `start_fun` raises `Akaw.Error` in both cases:
   #
-  #   * `Akaw.Error` for HTTP non-2xx responses (the async body is drained
-  #     once and decoded to extract CouchDB's `error` / `reason`).
-  #   * The underlying transport exception for network failures.
+  #   * HTTP non-2xx — the async body is drained once and decoded to
+  #     extract CouchDB's `error` / `reason` into the struct.
+  #   * Transport failure — `error: "stream_transport_error"` with the
+  #     underlying exception in `body.exception`, the same shape as a
+  #     mid-stream failure. One tag per API mode: every transport
+  #     failure on a streaming call, whatever its phase, reads the same.
   #
   # ## reduce_*_while — idle timeout
   #
   # No mailbox `receive` here; the between-chunk timeout is Finch's
-  # `:receive_timeout` (default 15s). For long-lived feeds raise it via
-  # `opts: [receive_timeout: ...]`.
+  # `:receive_timeout`. The continuous-feed wrappers default it via
+  # `default_receive_timeout/3` to cover CouchDB's legitimate quiet
+  # window; pass `receive_timeout:` in opts to override.
   #
   # ## reduce_*_while — error body
   #
@@ -85,7 +103,11 @@ defmodule Akaw.Streaming do
 
   defp open(client, method, path, opts) do
     {idle_timeout, opts} = Keyword.pop(opts, :idle_timeout, @default_idle_timeout)
-    opts = Keyword.put(opts, :into, :self)
+
+    opts =
+      opts
+      |> Keyword.put(:into, :self)
+      |> default_retry_off(client)
 
     case Request.request_raw(client, method, path, opts) do
       {:ok, %Req.Response{status: status} = resp} when status in 200..299 ->
@@ -95,7 +117,7 @@ defmodule Akaw.Streaming do
         raise build_open_error(resp, status)
 
       {:error, exception} ->
-        raise Error.wrap_transport(exception)
+        raise stream_transport_error(exception)
     end
   end
 
@@ -220,22 +242,25 @@ defmodule Akaw.Streaming do
 
   @type reducer_result(acc) :: {:cont, acc} | {:halt, acc}
 
-  # Transport options (Finch/Mint, which Req forwards to its Finch
-  # adapter) that we accept as per-call escape hatches on the
-  # `reduce_while/N` wrappers. Anything not in this list stays in `opts`
-  # and is treated as a CouchDB query param.
-  @req_opt_keys [:receive_timeout, :pool_timeout, :connect_options]
+  # Transport-level options that we accept as per-call escape hatches on
+  # the `reduce_while/N` wrappers. Anything not in this list stays in
+  # `opts` and is treated as a CouchDB query param. `:retry` is here so
+  # the documented per-call retry opt-in actually routes to Req instead
+  # of leaking into the query string and then being pinned off by
+  # `default_retry_off/2` — the exact inversion of the caller's intent.
+  @req_opt_keys [:receive_timeout, :pool_timeout, :connect_options, :retry]
 
   @doc """
-  Split a `reduce_while` opts keyword into `{req_opts, couchdb_opts}`,
-  pulling out the small set of Finch/Mint transport options we let
-  callers override per call (everything else is destined for query
-  params).
+  Split a flat opts keyword into `{req_opts, couchdb_opts}`, pulling out
+  the small set of transport-level options we let callers override per
+  call (everything else is destined for query params). Shared by every
+  streaming entry point — reduce wrappers, lazy streams, and the
+  feed-mode endpoints via `held_open_feed_opts/2`.
 
-  `:receive_timeout` and `:connect_options` ride to Finch through Req's
-  option passthrough. `:pool_timeout` is folded into Req 0.7's
-  `finch: [...]` keyword by `Akaw.Request`, which keeps the flat spelling
-  here warning-free.
+  `:receive_timeout`, `:connect_options`, and `:retry` ride to Req
+  through its option passthrough. `:pool_timeout` is folded into
+  Req 0.7's `finch: [...]` keyword by `Akaw.Request`, which keeps the
+  flat spelling here warning-free.
   """
   @spec split_req_opts(keyword()) :: {keyword(), keyword()}
   def split_req_opts(opts) when is_list(opts) do
@@ -247,36 +272,137 @@ defmodule Akaw.Streaming do
   # safe ceiling that won't fire mid-feed on a healthy connection.
   @server_picked_heartbeat_timeout 120_000
 
+  # Without a heartbeat, CouchDB ends a quiet longpoll/continuous feed
+  # after the `:timeout` param — milliseconds, server default 60s. The
+  # slack covers delivering the final response over a slow link.
+  @server_default_feed_timeout 60_000
+  @feed_timeout_slack 5_000
+
   @doc """
-  For continuous-feed reducers (`_changes`, `_db_updates`): default
-  `:receive_timeout` from `:heartbeat` if the caller didn't set the
-  timeout explicitly.
+  For held-open feeds (`_changes` longpoll/continuous, `_db_updates`):
+  default `:receive_timeout` to cover the window CouchDB may
+  legitimately stay silent, if the caller didn't set it explicitly.
+
+  Finch's own default (15s) is *shorter* than CouchDB's default quiet
+  window (60s), so without this a legitimately quiet feed was guaranteed
+  to die client-side with a transport timeout.
 
     * Integer `heartbeat > 0` → `receive_timeout = heartbeat * 2`
       (absorbs one missed heartbeat without spurious timeouts).
     * `heartbeat: true` / `"true"` (server picks the interval, default
       ~60s) → `receive_timeout = #{@server_picked_heartbeat_timeout}`.
-    * Anything else (no heartbeat, `0`, negative, garbage) → leave
-      `req_opts` alone and let Finch's default apply.
+    * No usable heartbeat → the server answers by `:timeout`
+      (milliseconds, its default #{@server_default_feed_timeout}), so
+      `receive_timeout = timeout + #{@feed_timeout_slack}` slack.
 
-  Explicit `:receive_timeout` always wins.
+  Explicit `:receive_timeout` always wins — per call *or* per client.
+  The per-call opts merge after the client's `req_options` in
+  `Akaw.Request.build/4`, so putting a derived value into per-call opts
+  would silently override a client-level setting; hence the check on
+  both layers, same as `default_retry_off/2`.
   """
-  @spec default_receive_timeout(keyword(), keyword()) :: keyword()
-  def default_receive_timeout(req_opts, couchdb_opts) do
-    if Keyword.has_key?(req_opts, :receive_timeout) do
+  @spec default_receive_timeout(Client.t(), keyword(), keyword()) :: keyword()
+  def default_receive_timeout(%Client{} = client, req_opts, couchdb_opts) do
+    explicit? =
+      Keyword.has_key?(req_opts, :receive_timeout) or
+        Keyword.has_key?(client.req_options, :receive_timeout)
+
+    if explicit? do
       req_opts
     else
-      case Keyword.get(couchdb_opts, :heartbeat) do
-        hb when is_integer(hb) and hb > 0 ->
-          Keyword.put(req_opts, :receive_timeout, hb * 2)
-
-        server_picked when server_picked in [true, "true"] ->
-          Keyword.put(req_opts, :receive_timeout, @server_picked_heartbeat_timeout)
-
-        _ ->
-          req_opts
-      end
+      Keyword.put(req_opts, :receive_timeout, derive_receive_timeout(couchdb_opts))
     end
+  end
+
+  defp derive_receive_timeout(couchdb_opts) do
+    heartbeat = Keyword.get(couchdb_opts, :heartbeat)
+
+    case positive_ms(heartbeat) do
+      nil when heartbeat in [true, "true"] -> @server_picked_heartbeat_timeout
+      nil -> quiet_window(couchdb_opts) + @feed_timeout_slack
+      hb -> hb * 2
+    end
+  end
+
+  defp quiet_window(couchdb_opts) do
+    case non_negative_ms(Keyword.get(couchdb_opts, :timeout)) do
+      nil -> @server_default_feed_timeout
+      server_timeout -> server_timeout
+    end
+  end
+
+  # CouchDB accepts numeric query params as strings — `heartbeat: "30000"`
+  # reaches the server exactly like `heartbeat: 30_000`, so both
+  # spellings must derive the same ceiling. A string that isn't a plain
+  # integer falls through to the defaults.
+  defp positive_ms(value) when is_integer(value) and value > 0, do: value
+
+  defp positive_ms(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, ""} when n > 0 -> n
+      _ -> nil
+    end
+  end
+
+  defp positive_ms(_), do: nil
+
+  defp non_negative_ms(value) when is_integer(value) and value >= 0, do: value
+
+  defp non_negative_ms(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, ""} when n >= 0 -> n
+      _ -> nil
+    end
+  end
+
+  defp non_negative_ms(_), do: nil
+
+  # Feeds where CouchDB may legitimately hold the connection open past
+  # the transport's default receive timeout. "normal" answers
+  # immediately, so it keeps the transport default.
+  @held_open_feeds ["longpoll", "continuous", "eventsource"]
+
+  @doc """
+  Split `opts` into `{req_opts, params}` and, when `params` names a
+  held-open feed (longpoll/continuous/eventsource), default
+  `:receive_timeout` via `default_receive_timeout/3`.
+
+  Shared by every endpoint that accepts a `:feed` option
+  (`Akaw.Changes.get/3`/`post/4`, `Akaw.Server.db_updates/2`), so a
+  quiet held-open feed can't be killed by the transport's default
+  before the server's own answer window elapses.
+  """
+  @spec held_open_feed_opts(Client.t(), keyword()) :: {keyword(), keyword()}
+  def held_open_feed_opts(%Client{} = client, opts) do
+    {req_opts, params} = split_req_opts(opts)
+
+    if to_string(Keyword.get(params, :feed, "normal")) in @held_open_feeds do
+      {default_receive_timeout(client, req_opts, params), params}
+    else
+      {req_opts, params}
+    end
+  end
+
+  @doc """
+  Decode one line of a line-delimited feed as JSON, raising a legible
+  `%Akaw.Error{error: "stream_decode_error"}` instead of a bare
+  `JSON.DecodeError` when the line is corrupt — the same posture
+  `Akaw.JsonItemStream` takes for row streams. Shared by the `_changes`
+  and `_db_updates` feed decoders.
+  """
+  @spec decode_feed_line!(String.t()) :: term()
+  def decode_feed_line!(line) do
+    JSON.decode!(line)
+  rescue
+    decode_error ->
+      reraise %Error{
+                status: nil,
+                error: "stream_decode_error",
+                reason:
+                  "feed line failed to decode: #{inspect(decode_error)}. Source line: " <>
+                    inspect(String.slice(line, 0, 200))
+              },
+              __STACKTRACE__
   end
 
   @doc """
@@ -425,11 +551,26 @@ defmodule Akaw.Streaming do
   end
 
   defp run_request(client, method, path, opts, collector) do
-    opts = Keyword.put(opts, :into, collector)
+    opts =
+      opts
+      |> Keyword.put(:into, collector)
+      |> default_retry_off(client)
 
     case Request.request_raw(client, method, path, opts) do
       {:ok, %Req.Response{} = resp} -> {:ok, resp}
-      {:error, exception} -> {:error, Error.wrap_transport(exception)}
+      {:error, exception} -> {:error, stream_transport_error(exception)}
+    end
+  end
+
+  # See "Retry: off by default" in the module comment. The per-call opts
+  # merge after the client's req_options in Request.build/4, so a bare
+  # `Keyword.put` here would override a client-level opt-in — hence the
+  # explicit has_key? checks on both layers.
+  defp default_retry_off(opts, %Client{req_options: req_options}) do
+    if Keyword.has_key?(opts, :retry) or Keyword.has_key?(req_options, :retry) do
+      opts
+    else
+      Keyword.put(opts, :retry, false)
     end
   end
 
