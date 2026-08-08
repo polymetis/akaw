@@ -12,14 +12,15 @@ defmodule Akaw.ReduceWhileTest do
   #     win over the lazy `stream/N` variants
   #   * chunk boundaries, including a line split mid-token
   #
-  # That last one is only possible from a plug as of Req 0.7, whose plug
-  # adapter delivers each `Plug.Conn.chunk/2` to the `into: fun` collector
-  # separately instead of buffering the whole body into one chunk. The
-  # equivalent tests in test/integration exercise the same paths against
-  # boundaries a real CouchDB chose.
+  # Chunk-boundary tests ride the loopback seam's real chunked-transfer
+  # encoding: each `Plug.Conn.chunk/2` is one HTTP chunk frame on the
+  # wire. The equivalent tests in test/integration exercise the same
+  # paths against boundaries a real CouchDB chose.
+
+  alias Akaw.Loopback
 
   defp pretty_rows(rows, container \\ "rows") do
-    body = Enum.map_join(rows, ",\n", &Jason.encode!/1)
+    body = Enum.map_join(rows, ",\n", &JSON.encode!/1)
     ~s({"total_rows":#{length(rows)},"offset":0,"#{container}":[\n#{body}\n]})
   end
 
@@ -33,7 +34,7 @@ defmodule Akaw.ReduceWhileTest do
 
   defp lines_plug(objects) do
     fn conn ->
-      body = Enum.map_join(objects, "\n", &Jason.encode!/1) <> "\n"
+      body = Enum.map_join(objects, "\n", &JSON.encode!/1) <> "\n"
 
       conn
       |> Plug.Conn.put_resp_content_type("application/json")
@@ -45,14 +46,14 @@ defmodule Akaw.ReduceWhileTest do
   # unconditionally (see "Retry: off, unconditionally" in Akaw.Streaming).
   # This helper carrying no opt-out is part of the proof.
   defp client_with(plug) do
-    Akaw.new(base_url: "http://x", req_options: [plug: plug])
+    Loopback.client(plug)
   end
 
   defp error_client(status, body) do
     plug = fn conn ->
       conn
       |> Plug.Conn.put_resp_content_type("application/json")
-      |> Plug.Conn.send_resp(status, Jason.encode!(body))
+      |> Plug.Conn.send_resp(status, JSON.encode!(body))
     end
 
     client_with(plug)
@@ -166,7 +167,7 @@ defmodule Akaw.ReduceWhileTest do
                end)
 
       assert_receive %{method: "POST", path: "/db/_design/d/_view/v", body: body}
-      assert Jason.decode!(body) == %{"keys" => ["a", "b"]}
+      assert JSON.decode!(body) == %{"keys" => ["a", "b"]}
     end
   end
 
@@ -204,7 +205,7 @@ defmodule Akaw.ReduceWhileTest do
                end)
 
       assert_receive %{method: "POST", path: "/db/_find", body: body}
-      assert Jason.decode!(body) == %{"selector" => %{"n" => 1}}
+      assert JSON.decode!(body) == %{"selector" => %{"n" => 1}}
     end
   end
 
@@ -271,8 +272,10 @@ defmodule Akaw.ReduceWhileTest do
 
   describe "chunk boundaries" do
     # Splits the payload at arbitrary byte offsets and sends each piece as
-    # its own HTTP chunk. Req 0.7's plug adapter passes them through
-    # individually, so the reducers' buffering has to do real work.
+    # its own HTTP chunk frame, so the reducers' buffering has to do real
+    # work. Assertions here are content-based on purpose: frames small
+    # enough to fit a socket buffer arrive whole, but that's a transport
+    # detail, not a promise (see Akaw.Loopback's moduledoc).
     defp chunked_plug(body, split_at) do
       fn conn ->
         conn = Plug.Conn.send_chunked(conn, 200)
@@ -441,7 +444,7 @@ defmodule Akaw.ReduceWhileTest do
         body: body
       }
 
-      assert Jason.decode!(body) == %{"doc_ids" => ["a", "b"]}
+      assert JSON.decode!(body) == %{"doc_ids" => ["a", "b"]}
       assert qs =~ "feed=continuous"
       assert qs =~ "filter=_doc_ids"
       assert qs =~ "since=now"
@@ -535,7 +538,7 @@ defmodule Akaw.ReduceWhileTest do
         body: body
       }
 
-      assert Jason.decode!(body) == %{"selector" => %{"active" => true}}
+      assert JSON.decode!(body) == %{"selector" => %{"active" => true}}
     end
   end
 
@@ -902,7 +905,7 @@ defmodule Akaw.ReduceWhileTest do
 
     test "a transient-looking failure is not retried: it surfaces, once" do
       calls = :counters.new(1, [])
-      client = Akaw.new(base_url: "http://x", req_options: [plug: flaky_once_plug(calls)])
+      client = Loopback.client(flaky_once_plug(calls))
 
       assert {:error, %Akaw.Error{status: 503}} =
                Akaw.Documents.reduce_while_all_docs(client, "db", [], fn row, acc ->
@@ -916,12 +919,19 @@ defmodule Akaw.ReduceWhileTest do
       # The same intent-inversion existed on the row streams: :retry (or
       # :receive_timeout) passed to stream_all_docs leaked into the query
       # string and the streaming default pinned retry off anyway.
+      #
+      # Observed via ETS, not send/assert_receive: consuming a lazy
+      # stream drains the caller's mailbox (the documented chunks/4
+      # hazard), so a message sent mid-stream would be eaten before the
+      # test could assert on it.
+      seen = :ets.new(:row_stream_qs, [:public])
+
       plug = fn conn ->
-        Process.put(:akaw_row_stream_qs, conn.query_string)
+        :ets.insert(seen, {:qs, conn.query_string})
         pretty_plug([%{"id" => "a"}]).(conn)
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+      client = Loopback.client(plug)
 
       assert [%{"id" => "a"}] =
                client
@@ -931,7 +941,7 @@ defmodule Akaw.ReduceWhileTest do
                )
                |> Enum.to_list()
 
-      qs = Process.get(:akaw_row_stream_qs) || ""
+      assert [{:qs, qs}] = :ets.lookup(seen, :qs)
       assert qs =~ "limit=10"
       refute qs =~ "receive_timeout"
     end
@@ -942,7 +952,7 @@ defmodule Akaw.ReduceWhileTest do
       # with the accumulator reset — the caller needs checkpoint-resume
       # (startkey/since), which only their code can implement. Silently
       # ignoring the option would be worse than honoring it; raise loudly.
-      client = Akaw.new(base_url: "http://x", req_options: [plug: pretty_plug([])])
+      client = Loopback.client(pretty_plug([]))
 
       assert_raise ArgumentError, ~r/never retry(.|\n)*resume/, fn ->
         Akaw.Documents.reduce_while_all_docs(
@@ -962,13 +972,8 @@ defmodule Akaw.ReduceWhileTest do
       calls = :counters.new(1, [])
 
       client =
-        Akaw.new(
-          base_url: "http://x",
-          req_options: [
-            plug: flaky_once_plug(calls),
-            retry: :safe_transient,
-            retry_delay: fn _ -> 0 end
-          ]
+        Loopback.client(flaky_once_plug(calls),
+          req_options: [retry: :safe_transient, retry_delay: fn _ -> 0 end]
         )
 
       assert {:error, %Akaw.Error{status: 503}} =
@@ -984,8 +989,7 @@ defmodule Akaw.ReduceWhileTest do
       # call — open or mid-stream, reduce or lazy — reads the same.
       # Previously this path said "transport_error" while the identical
       # failure on the lazy path said "stream_transport_error".
-      plug = fn conn -> Req.Test.transport_error(conn, :econnrefused) end
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+      client = Loopback.refused_client()
 
       assert {:error, %Akaw.Error{status: nil, error: "stream_transport_error"} = error} =
                Akaw.Documents.reduce_while_all_docs(client, "db", [], fn row, acc ->
@@ -996,8 +1000,7 @@ defmodule Akaw.ReduceWhileTest do
     end
 
     test "the lazy chunks path raises stream_transport_error on open failure" do
-      plug = fn conn -> Req.Test.transport_error(conn, :econnrefused) end
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+      client = Loopback.refused_client()
 
       error =
         assert_raise Akaw.Error, fn ->
@@ -1014,13 +1017,8 @@ defmodule Akaw.ReduceWhileTest do
       calls = :counters.new(1, [])
 
       client =
-        Akaw.new(
-          base_url: "http://x",
-          req_options: [
-            plug: flaky_once_plug(calls),
-            retry: :safe_transient,
-            retry_delay: fn _ -> 0 end
-          ]
+        Loopback.client(flaky_once_plug(calls),
+          req_options: [retry: :safe_transient, retry_delay: fn _ -> 0 end]
         )
 
       assert_raise Akaw.Error, ~r/503/, fn ->
@@ -1032,7 +1030,7 @@ defmodule Akaw.ReduceWhileTest do
 
     test "the lazy chunks path is not retried either" do
       calls = :counters.new(1, [])
-      client = Akaw.new(base_url: "http://x", req_options: [plug: flaky_once_plug(calls)])
+      client = Loopback.client(flaky_once_plug(calls))
 
       assert_raise Akaw.Error, ~r/503/, fn ->
         client |> Akaw.Changes.stream("db") |> Enum.take(1)
