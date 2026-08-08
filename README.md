@@ -14,8 +14,6 @@ Built on [Req](https://hex.pm/packages/req) (and therefore
 
 ## Installation
 
-Not on Hex yet. Add it from git:
-
 ```elixir
 def deps do
   [
@@ -23,6 +21,9 @@ def deps do
   ]
 end
 ```
+
+(From git while 0.1.0 is unreleased; once it lands on Hex,
+`{:akaw, "~> 0.1"}`.)
 
 Requires Elixir 1.18 or later (Akaw uses the built-in `JSON` module) and
 CouchDB 3.x.
@@ -167,6 +168,9 @@ client =
     req_options: [plug: fn conn -> Req.Test.json(conn, %{"ok" => true}) end]
   )
 ```
+
+Req's `:plug` adapter needs Plug on the code path, which Akaw only pulls
+in for its own tests — add `{:plug, "~> 1.0", only: :test}` to your deps.
 
 ## Development
 
