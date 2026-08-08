@@ -50,10 +50,25 @@ defmodule Akaw.Changes do
     * `:filter`, `:doc_ids` (short lists), `:view`
     * `:style` — `"main_only"` (default) or `"all_docs"`
     * `:seq_interval`
+
+  ## Longpoll and the receive timeout
+
+  With `feed: "longpoll"` CouchDB holds the response until a change
+  arrives or `:timeout` (milliseconds, server default 60s) elapses —
+  longer than the transport's default 15s receive timeout, which would
+  kill every quiet longpoll client-side before the server could answer.
+  For any held-open feed, `get/3` defaults the transport's
+  `:receive_timeout` to cover the server's window: `heartbeat * 2` for
+  an integer `:heartbeat`, otherwise `:timeout` plus slack.
+
+  `:receive_timeout` / `:pool_timeout` / `:connect_options` in `opts`
+  route to the transport rather than the query string; an explicit
+  `:receive_timeout` always wins.
   """
   @spec get(Client.t(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def get(%Client{} = client, db, opts \\ []) when is_binary(db) do
-    Request.request(client, :get, "/#{Path.encode(db)}/_changes", params: opts)
+    {req_opts, params} = split_feed_opts(opts)
+    Request.request(client, :get, "/#{Path.encode(db)}/_changes", [params: params] ++ req_opts)
   end
 
   @doc """
@@ -65,14 +80,21 @@ defmodule Akaw.Changes do
 
       Akaw.Changes.post(client, "users", %{doc_ids: ids},
         filter: "_doc_ids", since: "now")
+
+  Held-open feeds get the same `:receive_timeout` defaulting as `get/3`
+  (see "Longpoll and the receive timeout" there).
   """
   @spec post(Client.t(), String.t(), map(), keyword()) ::
           {:ok, map()} | {:error, term()}
   def post(%Client{} = client, db, body, opts \\ [])
       when is_binary(db) and is_map(body) do
-    Request.request(client, :post, "/#{Path.encode(db)}/_changes",
-      json: body,
-      params: opts
+    {req_opts, params} = split_feed_opts(opts)
+
+    Request.request(
+      client,
+      :post,
+      "/#{Path.encode(db)}/_changes",
+      [json: body, params: params] ++ req_opts
     )
   end
 
@@ -163,10 +185,12 @@ defmodule Akaw.Changes do
   and they'll be routed to the transport (Finch/Mint, via Req) instead
   of becoming query params.
 
-  Continuous feeds can sit silent for long stretches. If you pass an
-  integer `:heartbeat`, `:receive_timeout` defaults to `heartbeat * 2`
-  automatically — no spurious 15s timeouts from Finch's default. An
-  explicit `:receive_timeout` always wins.
+  Continuous feeds can sit silent for long stretches. `:receive_timeout`
+  defaults to cover CouchDB's legitimate quiet window — `heartbeat * 2`
+  if you pass an integer `:heartbeat`, otherwise the feed's `:timeout`
+  (milliseconds, server default 60s) plus slack — so Finch's 15s default
+  can't kill a healthy quiet feed. An explicit `:receive_timeout`
+  always wins.
 
       # heartbeat 30s → receive_timeout auto-set to 60s
       Akaw.Changes.reduce_while(client, "users", 0,
@@ -240,6 +264,21 @@ defmodule Akaw.Changes do
   end
 
   defp continuous_params(opts), do: Keyword.put(opts, :feed, "continuous")
+
+  # Feeds where CouchDB may legitimately hold the connection open past
+  # the transport's default receive timeout. "normal" answers
+  # immediately, so it keeps the transport default.
+  @held_open_feeds ["longpoll", "continuous", "eventsource"]
+
+  defp split_feed_opts(opts) do
+    {req_opts, params} = Streaming.split_req_opts(opts)
+
+    if to_string(Keyword.get(params, :feed, "normal")) in @held_open_feeds do
+      {Streaming.default_receive_timeout(req_opts, params), params}
+    else
+      {req_opts, params}
+    end
+  end
 
   defp reject_feed_override!(opts) do
     if Keyword.has_key?(opts, :feed) do

@@ -87,6 +87,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Quiet longpoll and continuous feeds no longer die at the transport's
+  15-second receive timeout.** CouchDB legitimately holds a quiet feed
+  open until `:timeout` (server default 60s) — or indefinitely with a
+  heartbeat — while Finch's default `receive_timeout` is 15s, so
+  `Akaw.Changes.get(client, db, feed: "longpoll")` on a quiet database
+  *always* failed client-side (and, with retry, took ~67 seconds and four
+  abandoned server-side connections to do it). Held-open feeds now
+  default `:receive_timeout` to cover the server's window: `heartbeat * 2`
+  for an integer heartbeat, 120s for a server-picked one, otherwise
+  `:timeout` + 5s slack. This applies to `get/3`/`post/4` with
+  longpoll/continuous/eventsource feeds and to the `reduce_while`
+  continuous wrappers (which previously only derived from `:heartbeat`).
+  `get/3` and `post/4` also now route `:receive_timeout` /
+  `:pool_timeout` / `:connect_options` to the transport instead of the
+  query string, matching the `reduce_while` variants. An explicit
+  `:receive_timeout` always wins.
+
 - **Streaming requests no longer inherit Req's automatic retry.** Req's
   default `retry: :safe_transient` re-runs the whole request after a
   transient failure (a 5xx, a dropped connection, a receive timeout). On

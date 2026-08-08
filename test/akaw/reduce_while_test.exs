@@ -623,16 +623,34 @@ defmodule Akaw.ReduceWhileTest do
       assert Keyword.get(req_str, :receive_timeout) == 120_000
     end
 
-    test "default_receive_timeout/2 ignores heartbeat: 0 (no timeout set)" do
-      assert Akaw.Streaming.default_receive_timeout([], heartbeat: 0) == []
+    # Without a usable heartbeat, CouchDB still answers a quiet feed by
+    # :timeout (server default 60s) — longer than Finch's default 15s
+    # receive timeout, which used to kill every legitimately quiet feed
+    # client-side. The derivation covers the server's window plus 5s
+    # delivery slack.
+    test "default_receive_timeout/2 covers the server window when heartbeat is 0" do
+      req = Akaw.Streaming.default_receive_timeout([], heartbeat: 0)
+      assert Keyword.get(req, :receive_timeout) == 65_000
     end
 
-    test "default_receive_timeout/2 ignores negative heartbeat" do
-      assert Akaw.Streaming.default_receive_timeout([], heartbeat: -1_000) == []
+    test "default_receive_timeout/2 covers the server window for negative heartbeat" do
+      req = Akaw.Streaming.default_receive_timeout([], heartbeat: -1_000)
+      assert Keyword.get(req, :receive_timeout) == 65_000
     end
 
-    test "default_receive_timeout/2 ignores when no heartbeat at all" do
-      assert Akaw.Streaming.default_receive_timeout([], []) == []
+    test "default_receive_timeout/2 covers the server window with no heartbeat at all" do
+      req = Akaw.Streaming.default_receive_timeout([], [])
+      assert Keyword.get(req, :receive_timeout) == 65_000
+    end
+
+    test "default_receive_timeout/2 derives from an explicit :timeout param" do
+      req = Akaw.Streaming.default_receive_timeout([], timeout: 90_000)
+      assert Keyword.get(req, :receive_timeout) == 95_000
+    end
+
+    test "default_receive_timeout/2 prefers heartbeat over :timeout (heartbeat overrides it server-side)" do
+      req = Akaw.Streaming.default_receive_timeout([], heartbeat: 30_000, timeout: 90_000)
+      assert Keyword.get(req, :receive_timeout) == 60_000
     end
 
     # The behavioral assertion: receive_timeout MUST NOT leak into the

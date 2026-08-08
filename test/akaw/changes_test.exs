@@ -41,6 +41,18 @@ defmodule Akaw.ChangesTest do
       assert qs =~ "timeout=30000"
       assert qs =~ "include_docs=true"
     end
+
+    test "routes transport opts to the transport, not the query string", %{client: client} do
+      assert {:ok, _} =
+               Akaw.Changes.get(client, "mydb",
+                 feed: "longpoll",
+                 receive_timeout: 90_000,
+                 pool_timeout: 500
+               )
+
+      assert_receive %{path: "/mydb/_changes", query_string: qs}
+      assert qs == "feed=longpoll"
+    end
   end
 
   describe "post/4" do

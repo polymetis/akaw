@@ -62,8 +62,9 @@ defmodule Akaw.Streaming do
   # ## reduce_*_while — idle timeout
   #
   # No mailbox `receive` here; the between-chunk timeout is Finch's
-  # `:receive_timeout` (default 15s). For long-lived feeds raise it via
-  # `opts: [receive_timeout: ...]`.
+  # `:receive_timeout`. The continuous-feed wrappers default it via
+  # `default_receive_timeout/2` to cover CouchDB's legitimate quiet
+  # window; pass `receive_timeout:` in opts to override.
   #
   # ## reduce_*_while — error body
   #
@@ -265,17 +266,28 @@ defmodule Akaw.Streaming do
   # safe ceiling that won't fire mid-feed on a healthy connection.
   @server_picked_heartbeat_timeout 120_000
 
+  # Without a heartbeat, CouchDB ends a quiet longpoll/continuous feed
+  # after the `:timeout` param — milliseconds, server default 60s. The
+  # slack covers delivering the final response over a slow link.
+  @server_default_feed_timeout 60_000
+  @feed_timeout_slack 5_000
+
   @doc """
-  For continuous-feed reducers (`_changes`, `_db_updates`): default
-  `:receive_timeout` from `:heartbeat` if the caller didn't set the
-  timeout explicitly.
+  For held-open feeds (`_changes` longpoll/continuous, `_db_updates`):
+  default `:receive_timeout` to cover the window CouchDB may
+  legitimately stay silent, if the caller didn't set it explicitly.
+
+  Finch's own default (15s) is *shorter* than CouchDB's default quiet
+  window (60s), so without this a legitimately quiet feed was guaranteed
+  to die client-side with a transport timeout.
 
     * Integer `heartbeat > 0` → `receive_timeout = heartbeat * 2`
       (absorbs one missed heartbeat without spurious timeouts).
     * `heartbeat: true` / `"true"` (server picks the interval, default
       ~60s) → `receive_timeout = #{@server_picked_heartbeat_timeout}`.
-    * Anything else (no heartbeat, `0`, negative, garbage) → leave
-      `req_opts` alone and let Finch's default apply.
+    * No usable heartbeat → the server answers by `:timeout`
+      (milliseconds, its default #{@server_default_feed_timeout}), so
+      `receive_timeout = timeout + #{@feed_timeout_slack}` slack.
 
   Explicit `:receive_timeout` always wins.
   """
@@ -284,16 +296,26 @@ defmodule Akaw.Streaming do
     if Keyword.has_key?(req_opts, :receive_timeout) do
       req_opts
     else
-      case Keyword.get(couchdb_opts, :heartbeat) do
-        hb when is_integer(hb) and hb > 0 ->
-          Keyword.put(req_opts, :receive_timeout, hb * 2)
+      Keyword.put(req_opts, :receive_timeout, derive_receive_timeout(couchdb_opts))
+    end
+  end
 
-        server_picked when server_picked in [true, "true"] ->
-          Keyword.put(req_opts, :receive_timeout, @server_picked_heartbeat_timeout)
+  defp derive_receive_timeout(couchdb_opts) do
+    case Keyword.get(couchdb_opts, :heartbeat) do
+      hb when is_integer(hb) and hb > 0 ->
+        hb * 2
 
-        _ ->
-          req_opts
-      end
+      server_picked when server_picked in [true, "true"] ->
+        @server_picked_heartbeat_timeout
+
+      _ ->
+        case Keyword.get(couchdb_opts, :timeout) do
+          server_timeout when is_integer(server_timeout) and server_timeout >= 0 ->
+            server_timeout + @feed_timeout_slack
+
+          _ ->
+            @server_default_feed_timeout + @feed_timeout_slack
+        end
     end
   end
 
