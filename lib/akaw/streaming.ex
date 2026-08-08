@@ -242,22 +242,23 @@ defmodule Akaw.Streaming do
 
   @type reducer_result(acc) :: {:cont, acc} | {:halt, acc}
 
-  # Transport options (Finch/Mint, which Req forwards to its Finch
-  # adapter) that we accept as per-call escape hatches on the
-  # `reduce_while/N` wrappers. Anything not in this list stays in `opts`
-  # and is treated as a CouchDB query param.
-  @req_opt_keys [:receive_timeout, :pool_timeout, :connect_options]
+  # Transport-level options that we accept as per-call escape hatches on
+  # the `reduce_while/N` wrappers. Anything not in this list stays in
+  # `opts` and is treated as a CouchDB query param. `:retry` is here so
+  # the documented per-call retry opt-in actually routes to Req instead
+  # of leaking into the query string and then being pinned off by
+  # `default_retry_off/2` — the exact inversion of the caller's intent.
+  @req_opt_keys [:receive_timeout, :pool_timeout, :connect_options, :retry]
 
   @doc """
   Split a `reduce_while` opts keyword into `{req_opts, couchdb_opts}`,
-  pulling out the small set of Finch/Mint transport options we let
-  callers override per call (everything else is destined for query
-  params).
+  pulling out the small set of transport-level options we let callers
+  override per call (everything else is destined for query params).
 
-  `:receive_timeout` and `:connect_options` ride to Finch through Req's
-  option passthrough. `:pool_timeout` is folded into Req 0.7's
-  `finch: [...]` keyword by `Akaw.Request`, which keeps the flat spelling
-  here warning-free.
+  `:receive_timeout`, `:connect_options`, and `:retry` ride to Req
+  through its option passthrough. `:pool_timeout` is folded into
+  Req 0.7's `finch: [...]` keyword by `Akaw.Request`, which keeps the
+  flat spelling here warning-free.
   """
   @spec split_req_opts(keyword()) :: {keyword(), keyword()}
   def split_req_opts(opts) when is_list(opts) do

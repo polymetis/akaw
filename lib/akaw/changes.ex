@@ -205,7 +205,9 @@ defmodule Akaw.Changes do
   transparently re-running the request — which would reset the
   accumulator and feed every change to the reducer again. If your
   reducer is idempotent and you'd rather have the restart, opt back in
-  with `Akaw.new(req_options: [retry: :safe_transient])`.
+  per call (`retry: :safe_transient` in `opts`, routed to the transport
+  like `:receive_timeout`) or per client
+  (`Akaw.new(req_options: [retry: :safe_transient])`).
   """
   @spec reduce_while(
           Client.t(),
