@@ -92,6 +92,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A real README, and API documentation via `ex_doc` (`mix docs`), with the
+  modules grouped by CouchDB API section.
+
 - `:finch` now also accepts a keyword list of Finch options, e.g.
   `Akaw.new(finch: [name: MyApp.Finch, pool_tag: :bulk])`. A bare pool name
   still works.
