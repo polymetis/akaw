@@ -59,7 +59,8 @@ defmodule Akaw.Changes do
   kill every quiet longpoll client-side before the server could answer.
   For any held-open feed, `get/3` defaults the transport's
   `:receive_timeout` to cover the server's window: `heartbeat * 2` for
-  an integer `:heartbeat`, otherwise `:timeout` plus slack.
+  an integer `:heartbeat`, 120s for a server-picked one
+  (`heartbeat: true`), otherwise `:timeout` plus slack.
 
   `:receive_timeout` / `:pool_timeout` / `:connect_options` in `opts`
   route to the transport rather than the query string; an explicit

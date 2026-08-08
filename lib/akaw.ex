@@ -118,16 +118,20 @@ defmodule Akaw do
         * `:connect_options` — TCP/TLS options Finch forwards to Mint
 
       Anything else flows through to the endpoint as a query param.
-      For continuous feeds, `:receive_timeout` auto-defaults to
-      `heartbeat * 2` when you pass an integer `:heartbeat` and don't
-      set the timeout yourself.
+      For held-open feeds (longpoll/continuous), `:receive_timeout`
+      auto-defaults to cover CouchDB's legitimate quiet window —
+      `heartbeat * 2` for an integer `:heartbeat`, 120s for a
+      server-picked one, otherwise the feed's `:timeout` (server
+      default 60s) plus slack. An explicit `:receive_timeout` — per
+      call or per client — always wins.
 
     * **Errors.** Every non-success path produces `{:error, %Akaw.Error{}}`.
       HTTP non-2xx fills `:status`, `:error`, `:reason`, `:body` from
       CouchDB. Transport failures (timeouts, DNS, refused) set
-      `status: nil`, `error: "transport_error"`, and stash the underlying
-      Mint/Finch exception in `body.exception` for the curious. See
-      `Akaw.Error` for the full inventory of shapes.
+      `status: nil` and stash the underlying Mint/Finch exception in
+      `body.exception` for the curious — tagged `"transport_error"` on
+      plain requests and `"stream_transport_error"` on the streaming
+      APIs. See `Akaw.Error` for the full inventory of shapes.
   """
 
   alias Akaw.Client

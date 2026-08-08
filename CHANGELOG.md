@@ -58,7 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `"stream_transport_error"` — the same physical event reading
   differently across API flavors. Now it's one tag per API mode:
   streaming calls always say `"stream_transport_error"`, non-streaming
-  calls say `"transport_error"` (or `"decode_error"`, above). If you
+  calls say `"transport_error"` (or `"decode_error"` — see Fixed). If you
   matched `"transport_error"` from `reduce_while` results, update the
   pattern.
 
