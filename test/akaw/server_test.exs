@@ -135,7 +135,7 @@ defmodule Akaw.ServerTest do
       Req.Test.json(conn, %{})
     end
 
-    client = Akaw.new(base_url: "http://x", req_options: [plug: plug, retry: false])
+    client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
 
     try do
       client |> Akaw.Server.stream_db_updates(since: "now") |> Enum.take(1)

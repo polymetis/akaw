@@ -94,7 +94,7 @@ defmodule Akaw.ViewTest do
         Req.Test.json(conn, %{})
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug, retry: false])
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
 
       try do
         client
@@ -126,7 +126,7 @@ defmodule Akaw.ViewTest do
         Req.Test.json(conn, %{})
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug, retry: false])
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
 
       try do
         client

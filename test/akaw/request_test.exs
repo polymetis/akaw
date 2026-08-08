@@ -161,6 +161,32 @@ defmodule Akaw.RequestTest do
       assert stderr =~ "pool_timeout" and stderr =~ "deprecated"
     end
 
+    @tag :capture_log
+    test "non-streaming requests keep Req's default retry" do
+      # The streaming paths pin retry: false (delivery-once); complete
+      # single-shot responses are idempotent to retry, so the plain
+      # request path deliberately keeps Req's :safe_transient default.
+      calls = :counters.new(1, [])
+
+      plug = fn conn ->
+        :counters.add(calls, 1, 1)
+
+        case :counters.get(calls, 1) do
+          1 -> Plug.Conn.send_resp(conn, 503, "unavailable")
+          _ -> Req.Test.json(conn, %{"ok" => true})
+        end
+      end
+
+      client =
+        Akaw.new(
+          base_url: "http://couch.example",
+          req_options: [plug: plug, retry_delay: fn _ -> 0 end]
+        )
+
+      assert {:ok, %{"ok" => true}} = Request.request(client, :get, "/")
+      assert :counters.get(calls, 1) == 2
+    end
+
     test "transport exceptions are wrapped into %Akaw.Error{status: nil}" do
       plug = fn conn -> Req.Test.transport_error(conn, :econnrefused) end
       client = client_with(plug)
