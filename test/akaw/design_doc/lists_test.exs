@@ -1,6 +1,8 @@
 defmodule Akaw.DesignDoc.ListsTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   setup do
     test = self()
 
@@ -14,10 +16,10 @@ defmodule Akaw.DesignDoc.ListsTest do
         body: body
       })
 
-      Req.Test.json(conn, %{"ok" => true})
+      Loopback.json(conn, %{"ok" => true})
     end
 
-    {:ok, client: Akaw.new(base_url: "http://x", req_options: [plug: plug])}
+    {:ok, client: Loopback.client(plug)}
   end
 
   test "call/6 with same-ddoc view (string)", %{client: client} do
@@ -53,7 +55,7 @@ defmodule Akaw.DesignDoc.ListsTest do
              )
 
     assert_receive %{method: "POST", body: body}
-    assert Jason.decode!(body) == %{"filter" => "x"}
+    assert JSON.decode!(body) == %{"filter" => "x"}
   end
 
   test "call/6 refuses a body on the default :get method", %{client: client} do

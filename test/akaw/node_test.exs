@@ -1,6 +1,8 @@
 defmodule Akaw.NodeTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   setup do
     test = self()
 
@@ -13,10 +15,10 @@ defmodule Akaw.NodeTest do
         body: body
       })
 
-      Req.Test.json(conn, %{"ok" => true})
+      Loopback.json(conn, %{"ok" => true})
     end
 
-    {:ok, client: Akaw.new(base_url: "http://x", req_options: [plug: plug])}
+    {:ok, client: Loopback.client(plug)}
   end
 
   test "info/2 defaults to _local", %{client: client} do
@@ -57,6 +59,6 @@ defmodule Akaw.NodeTest do
   test "restart/2 POSTs an empty body", %{client: client} do
     assert {:ok, _} = Akaw.Node.restart(client)
     assert_receive %{method: "POST", path: "/_node/_local/_restart", body: body}
-    assert Jason.decode!(body) == %{}
+    assert JSON.decode!(body) == %{}
   end
 end

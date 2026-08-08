@@ -1,6 +1,8 @@
 defmodule Akaw.ClusterTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   setup do
     test = self()
 
@@ -13,10 +15,10 @@ defmodule Akaw.ClusterTest do
         body: body
       })
 
-      Req.Test.json(conn, %{"state" => "cluster_finished"})
+      Loopback.json(conn, %{"state" => "cluster_finished"})
     end
 
-    {:ok, client: Akaw.new(base_url: "http://x", req_options: [plug: plug])}
+    {:ok, client: Loopback.client(plug)}
   end
 
   test "get/1 → GET /_cluster_setup", %{client: client} do
@@ -34,6 +36,6 @@ defmodule Akaw.ClusterTest do
 
     assert {:ok, _} = Akaw.Cluster.setup(client, body)
     assert_receive %{method: "POST", path: "/_cluster_setup", body: payload}
-    assert Jason.decode!(payload)["action"] == "enable_single_node"
+    assert JSON.decode!(payload)["action"] == "enable_single_node"
   end
 end

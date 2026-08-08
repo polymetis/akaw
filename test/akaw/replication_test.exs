@@ -1,6 +1,8 @@
 defmodule Akaw.ReplicationTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   setup do
     test = self()
 
@@ -14,17 +16,17 @@ defmodule Akaw.ReplicationTest do
         body: body
       })
 
-      Req.Test.json(conn, %{"ok" => true})
+      Loopback.json(conn, %{"ok" => true})
     end
 
-    {:ok, client: Akaw.new(base_url: "http://x", req_options: [plug: plug])}
+    {:ok, client: Loopback.client(plug)}
   end
 
   test "create/4 PUTs the doc into _replicator", %{client: client} do
     doc = %{source: "http://from/db", target: "to", continuous: true}
     assert {:ok, _} = Akaw.Replication.create(client, "my_repl", doc)
     assert_receive %{method: "PUT", path: "/_replicator/my_repl", body: body}
-    decoded = Jason.decode!(body)
+    decoded = JSON.decode!(body)
     assert decoded["source"] == "http://from/db"
     assert decoded["target"] == "to"
     assert decoded["continuous"] == true

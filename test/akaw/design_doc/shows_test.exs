@@ -1,6 +1,8 @@
 defmodule Akaw.DesignDoc.ShowsTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   setup do
     test = self()
 
@@ -14,10 +16,10 @@ defmodule Akaw.DesignDoc.ShowsTest do
         body: body
       })
 
-      Req.Test.json(conn, %{"ok" => true})
+      Loopback.json(conn, %{"ok" => true})
     end
 
-    {:ok, client: Akaw.new(base_url: "http://x", req_options: [plug: plug])}
+    {:ok, client: Loopback.client(plug)}
   end
 
   test "call/5 → GET /_show/{func} without doc", %{client: client} do
@@ -38,7 +40,7 @@ defmodule Akaw.DesignDoc.ShowsTest do
              )
 
     assert_receive %{method: "POST", body: body}
-    assert Jason.decode!(body) == %{"x" => 1}
+    assert JSON.decode!(body) == %{"x" => 1}
   end
 
   test "call/5 forwards :params as query string", %{client: client} do

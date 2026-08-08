@@ -1,6 +1,8 @@
 defmodule Akaw.SecurityTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   setup do
     test = self()
 
@@ -13,10 +15,10 @@ defmodule Akaw.SecurityTest do
         body: body
       })
 
-      Req.Test.json(conn, %{"ok" => true})
+      Loopback.json(conn, %{"ok" => true})
     end
 
-    {:ok, client: Akaw.new(base_url: "http://x", req_options: [plug: plug])}
+    {:ok, client: Loopback.client(plug)}
   end
 
   test "get/2 → GET /{db}/_security", %{client: client} do
@@ -32,7 +34,7 @@ defmodule Akaw.SecurityTest do
 
     assert {:ok, _} = Akaw.Security.put(client, "mydb", sec)
     assert_receive %{method: "PUT", path: "/mydb/_security", body: body}
-    decoded = Jason.decode!(body)
+    decoded = JSON.decode!(body)
     assert decoded["admins"]["names"] == ["alice"]
     assert decoded["members"]["roles"] == []
   end

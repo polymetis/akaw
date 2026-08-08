@@ -1,6 +1,8 @@
 defmodule Akaw.DocumentTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   setup do
     test = self()
 
@@ -15,10 +17,10 @@ defmodule Akaw.DocumentTest do
         headers: conn.req_headers
       })
 
-      Req.Test.json(conn, %{"ok" => true})
+      Loopback.json(conn, %{"ok" => true})
     end
 
-    {:ok, client: Akaw.new(base_url: "http://x", req_options: [plug: plug])}
+    {:ok, client: Loopback.client(plug)}
   end
 
   test "head/3 → HEAD /{db}/{id}", %{client: client} do
@@ -67,7 +69,7 @@ defmodule Akaw.DocumentTest do
   test "put/5 → PUT /{db}/{id} with JSON body", %{client: client} do
     assert {:ok, _} = Akaw.Document.put(client, "mydb", "doc1", %{name: "alice"})
     assert_receive %{method: "PUT", path: "/mydb/doc1", body: body}
-    assert Jason.decode!(body) == %{"name" => "alice"}
+    assert JSON.decode!(body) == %{"name" => "alice"}
   end
 
   test "put/5 forwards :rev as a query param", %{client: client} do

@@ -1,6 +1,8 @@
 defmodule Akaw.DesignDoc.RewritesTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   setup do
     test = self()
 
@@ -14,10 +16,10 @@ defmodule Akaw.DesignDoc.RewritesTest do
         body: body
       })
 
-      Req.Test.json(conn, %{"ok" => true})
+      Loopback.json(conn, %{"ok" => true})
     end
 
-    {:ok, client: Akaw.new(base_url: "http://x", req_options: [plug: plug])}
+    {:ok, client: Loopback.client(plug)}
   end
 
   test "call/5 appends path verbatim", %{client: client} do
@@ -41,7 +43,7 @@ defmodule Akaw.DesignDoc.RewritesTest do
              )
 
     assert_receive %{method: "POST", body: body}
-    assert Jason.decode!(body) == %{"name" => "x"}
+    assert JSON.decode!(body) == %{"name" => "x"}
   end
 
   test "call/5 refuses a body on the default :get method", %{client: client} do
@@ -64,7 +66,7 @@ defmodule Akaw.DesignDoc.RewritesTest do
              )
 
     assert_receive %{method: "GET", body: body}
-    assert Jason.decode!(body) == %{"name" => "x"}
+    assert JSON.decode!(body) == %{"name" => "x"}
   end
 
   test "call/5 with :params", %{client: client} do
