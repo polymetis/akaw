@@ -82,9 +82,30 @@ defmodule Akaw.Integration.ReplicationTest do
 
   defp build_authed_url(client, db) do
     uri = URI.parse(client.base_url)
-    user = System.get_env("AKAW_TEST_USER", "admin")
-    pass = System.get_env("AKAW_TEST_PASS", "password")
+    user = URI.encode_www_form(System.get_env("AKAW_TEST_USER", "admin"))
+    pass = URI.encode_www_form(System.get_env("AKAW_TEST_PASS", "password"))
     "#{uri.scheme}://#{user}:#{pass}@#{uri.host}:#{uri.port}/#{db}"
+  end
+
+  # The real credentials must go INTO the replication document — that's
+  # how CouchDB reaches the source — but they must never come OUT in
+  # test output: CI logs are often world-readable, AKAW_TEST_PASS may be
+  # a real admin password there, and these diagnostics fire precisely on
+  # the flakes that get pasted into issues.
+  #
+  # Two layers, because a URL-shape regex alone fails open on passwords
+  # containing '@' or whitespace: first scrub the known plaintext (this
+  # process holds the exact secret, in both raw and www-form spellings),
+  # then the //user:pass@ shape as a backstop for any credential-bearing
+  # URL CouchDB embeds in its own error strings.
+  defp redact_credentials(text) do
+    pass = System.get_env("AKAW_TEST_PASS", "password")
+
+    [pass, URI.encode_www_form(pass)]
+    |> Enum.uniq()
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.reduce(text, &String.replace(&2, &1, "[REDACTED]"))
+    |> String.replace(~r{//([^/:\s]+):\S+@}, "//\\1:[REDACTED]@")
   end
 
   # Poll until the replicated doc shows up, giving up early if the
@@ -105,18 +126,22 @@ defmodule Akaw.Integration.ReplicationTest do
         :ok
 
       unhealthy = replication_failure(client, repl_id) ->
-        flunk("""
-        replication job is not healthy, so #{doc_id} is never arriving:
-          #{inspect(unhealthy)}
-          source/target URL given to CouchDB: #{build_authed_url(client, target_db)}
-        """)
+        flunk(
+          redact_credentials("""
+          replication job is not healthy, so #{doc_id} is never arriving:
+            #{inspect(unhealthy)}
+            source/target URL given to CouchDB: #{build_authed_url(client, target_db)}
+          """)
+        )
 
       System.monotonic_time(:millisecond) > deadline ->
-        flunk("""
-        replication did not deliver #{doc_id} within #{@replication_ceiling_ms}ms.
-          scheduler: #{inspect(replication_state(client, repl_id))}
-          source/target URL given to CouchDB: #{build_authed_url(client, target_db)}
-        """)
+        flunk(
+          redact_credentials("""
+          replication did not deliver #{doc_id} within #{@replication_ceiling_ms}ms.
+            scheduler: #{inspect(replication_state(client, repl_id))}
+            source/target URL given to CouchDB: #{build_authed_url(client, target_db)}
+          """)
+        )
 
       true ->
         Process.sleep(@replication_poll_ms)

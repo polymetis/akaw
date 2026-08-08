@@ -5,9 +5,18 @@ defmodule Akaw.IntegrationHelpers do
   By default targets `http://localhost:5984` with `admin:password`. Override
   via env vars:
 
-    * `AKAW_TEST_URL` — base URL (e.g. `http://localhost:15984`)
+    * `AKAW_TEST_URL` — base URL
     * `AKAW_TEST_USER` — admin username
     * `AKAW_TEST_PASS` — admin password
+
+  One constraint on `AKAW_TEST_URL`: the replication tests hand it to
+  CouchDB as a replication source/target, and replication runs
+  *server-side* — so the URL must be reachable from inside CouchDB
+  itself, not just from the test host. A container published on a
+  remapped host port (say `-p 15984:5984`, `AKAW_TEST_URL=http://localhost:15984`)
+  passes everything except replication, which dies with `econnrefused`:
+  inside the container, localhost:15984 doesn't exist. Publish on
+  `5984:5984` (as CI does) and the URL resolves on both sides.
 
   Run integration tests with:
 
@@ -62,5 +71,29 @@ defmodule Akaw.IntegrationHelpers do
   def ensure_system_dbs(client) do
     Enum.each(["_users", "_replicator", "_global_changes"], &ensure_db(client, &1))
     :ok
+  end
+
+  @doc """
+  Sync point for live-arrival `_changes` tests: writes sentinel docs until
+  the continuous feed sends one back (the consumer must `send` the calling
+  process `:feed_open` when it sees a `"sentinel" <> _` id), or gives up.
+
+  A single pre-written sentinel is NOT enough: the feed runs
+  `since: "now"`, so a sentinel written before the connection is
+  established falls outside the window and is never delivered — no
+  timeout fixes a message that is never coming. (Observed on a GitHub
+  runner.) Each attempt writes a fresh doc id so every write is a new
+  change the feed can deliver.
+  """
+  def write_sentinels_until_feed_open(client, db, attempts \\ 100) do
+    Enum.reduce_while(1..attempts, {:error, :never_opened}, fn i, _acc ->
+      {:ok, _} = Akaw.Document.put(client, db, "sentinel_#{i}", %{})
+
+      receive do
+        :feed_open -> {:halt, :ok}
+      after
+        200 -> {:cont, {:error, :never_opened}}
+      end
+    end)
   end
 end

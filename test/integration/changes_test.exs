@@ -87,15 +87,28 @@ defmodule Akaw.Integration.ChangesTest do
 
     test "picks up changes that arrive after the stream is open",
          %{client: client, db: db} do
+      # Same sync-point shape as the reduce_while live-arrival test (see
+      # write_sentinels_until_feed_open): a sleep raced on slow CI —
+      # since: "now" resolves after any write that lands before the
+      # connection is established, so those changes are never delivered
+      # and Enum.take blocks on heartbeats until the await raises.
+      test = self()
+
       task =
         Task.async(fn ->
           client
           |> Akaw.Changes.stream(db, since: "now", heartbeat: 5_000)
+          |> Stream.each(fn change ->
+            if match?("sentinel" <> _, change["id"]), do: send(test, :feed_open)
+          end)
+          |> Stream.reject(&match?("sentinel" <> _, &1["id"]))
           |> Enum.take(2)
         end)
 
-      # Give the stream a moment to open the connection
-      Process.sleep(300)
+      # assert/1, no message argument: with `pattern = expr` the macro
+      # reports the mismatching right-hand value itself, whereas a
+      # message on assert/2 is dead code (the match raises first).
+      assert :ok = write_sentinels_until_feed_open(client, db)
 
       {:ok, _} = Akaw.Document.put(client, db, "live1", %{n: 1})
       {:ok, _} = Akaw.Document.put(client, db, "live2", %{n: 2})

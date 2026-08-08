@@ -212,9 +212,10 @@ defmodule Akaw.Integration.ReduceWhileTest do
         end)
 
       # Sentinels prove the feed is established and receiving; we write
-      # live1/live2 only after one comes back.
-      assert :ok = write_sentinels_until_feed_open(client, db),
-             "continuous feed never reported a sentinel"
+      # live1/live2 only after one comes back. (assert/1 without a
+      # message: the match raises before assert/2's message could ever
+      # print, and the macro reports the actual right-hand value.)
+      assert :ok = write_sentinels_until_feed_open(client, db)
 
       {:ok, _} = Akaw.Document.put(client, db, "live1", %{n: 1})
       {:ok, _} = Akaw.Document.put(client, db, "live2", %{n: 2})
@@ -232,21 +233,5 @@ defmodule Akaw.Integration.ReduceWhileTest do
                  fn _, n -> {:cont, n + 1} end
                )
     end
-  end
-
-  # Writes sentinel docs until the continuous feed sends one back, or gives
-  # up. Each doc gets a fresh id, so every write is a new change the feed
-  # can deliver — retrying a single id would need its rev and would only
-  # produce one change per revision anyway.
-  defp write_sentinels_until_feed_open(client, db, attempts \\ 100) do
-    Enum.reduce_while(1..attempts, {:error, :never_opened}, fn i, _acc ->
-      {:ok, _} = Akaw.Document.put(client, db, "sentinel_#{i}", %{})
-
-      receive do
-        :feed_open -> {:halt, :ok}
-      after
-        200 -> {:cont, {:error, :never_opened}}
-      end
-    end)
   end
 end
