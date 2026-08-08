@@ -80,15 +80,17 @@ defmodule Akaw.Loopback do
   def url(plug_fun) when is_function(plug_fun, 1) do
     server =
       start_supervised!(
-        {Bandit,
-         plug: {FunPlug, plug_fun},
-         ip: {127, 0, 0, 1},
-         port: 0,
-         startup_log: false,
-         # A test listener serves exactly one client; the default 100
-         # acceptors are ~300 idle processes per listener, ~400
-         # listeners per suite run.
-         thousand_island_options: [num_acceptors: 2]},
+        {
+          Bandit,
+          plug: {FunPlug, plug_fun},
+          ip: {127, 0, 0, 1},
+          port: 0,
+          startup_log: false,
+          # A test listener serves exactly one client; the default 100
+          # acceptors are ~300 idle processes per listener, ~400
+          # listeners per suite run.
+          thousand_island_options: [num_acceptors: 2]
+        },
         # A test may mount several servers; the default child id (Bandit)
         # would collide on the second one.
         id: make_ref()

@@ -75,12 +75,16 @@ defmodule Akaw.PartitionTest do
       fn conn ->
         {:ok, request_body, conn} = Plug.Conn.read_body(conn)
 
-        :ets.insert(seen, {:akaw_partition_stream_req, %{
-          method: conn.method,
-          path: conn.request_path,
-          query_string: conn.query_string,
-          body: request_body
-        }})
+        :ets.insert(
+          seen,
+          {:akaw_partition_stream_req,
+           %{
+             method: conn.method,
+             path: conn.request_path,
+             query_string: conn.query_string,
+             body: request_body
+           }}
+        )
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
