@@ -1,6 +1,8 @@
 defmodule Akaw.ConfigTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   setup do
     test = self()
 
@@ -13,10 +15,10 @@ defmodule Akaw.ConfigTest do
         body: body
       })
 
-      Req.Test.json(conn, %{"ok" => true})
+      Loopback.json(conn, %{"ok" => true})
     end
 
-    {:ok, client: Akaw.new(base_url: "http://x", req_options: [plug: plug])}
+    {:ok, client: Loopback.client(plug)}
   end
 
   test "get/2 → /_node/_local/_config", %{client: client} do
@@ -37,7 +39,7 @@ defmodule Akaw.ConfigTest do
   test "put/5 PUTs a JSON-encoded string value", %{client: client} do
     assert {:ok, _} = Akaw.Config.put(client, "log", "level", "debug")
     assert_receive %{method: "PUT", path: "/_node/_local/_config/log/level", body: body}
-    assert Jason.decode!(body) == "debug"
+    assert JSON.decode!(body) == "debug"
   end
 
   test "delete/4 → DELETE", %{client: client} do
@@ -48,7 +50,7 @@ defmodule Akaw.ConfigTest do
   test "reload/2 → POST /_config/_reload", %{client: client} do
     assert {:ok, _} = Akaw.Config.reload(client)
     assert_receive %{method: "POST", path: "/_node/_local/_config/_reload", body: body}
-    assert Jason.decode!(body) == %{}
+    assert JSON.decode!(body) == %{}
   end
 
   test "all functions accept :node option", %{client: client} do

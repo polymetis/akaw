@@ -1,6 +1,8 @@
 defmodule Akaw.DesignDoc.UpdatesTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   setup do
     test = self()
 
@@ -13,16 +15,16 @@ defmodule Akaw.DesignDoc.UpdatesTest do
         body: body
       })
 
-      Req.Test.json(conn, %{"ok" => true})
+      Loopback.json(conn, %{"ok" => true})
     end
 
-    {:ok, client: Akaw.new(base_url: "http://x", req_options: [plug: plug])}
+    {:ok, client: Loopback.client(plug)}
   end
 
   test "call/5 → POST /_update/{func} without doc", %{client: client} do
     assert {:ok, _} = Akaw.DesignDoc.Updates.call(client, "db", "d", "f")
     assert_receive %{method: "POST", path: "/db/_design/d/_update/f", body: body}
-    assert Jason.decode!(body) == %{}
+    assert JSON.decode!(body) == %{}
   end
 
   test "call/5 with :doc_id targets a specific doc", %{client: client} do
@@ -39,7 +41,7 @@ defmodule Akaw.DesignDoc.UpdatesTest do
              )
 
     assert_receive %{method: "PUT", body: body}
-    assert Jason.decode!(body) == %{"n" => 1}
+    assert JSON.decode!(body) == %{"n" => 1}
   end
 
   test "preserves _design/ in doc id", %{client: client} do

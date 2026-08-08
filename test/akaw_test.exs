@@ -79,6 +79,29 @@ defmodule AkawTest do
       end
     end
 
+    test "hides credentials embedded in base_url" do
+      # Req 0.7 honours URL userinfo as Basic auth, which would otherwise make
+      # :base_url a secret — and :base_url is the one field this Inspect
+      # implementation deliberately prints. Akaw.new/1 lifts it into :auth so
+      # the redaction still holds.
+      client = Akaw.new(base_url: "http://admin:hunter2@localhost:5984")
+      dump = inspect(client)
+
+      refute dump =~ "hunter2"
+      refute dump =~ "admin"
+      assert dump =~ "http://localhost:5984"
+    end
+
+    test "still shows base_url and finch for debugging" do
+      client = Akaw.new(base_url: "http://localhost:5984", finch: MyApp.Finch)
+      dump = inspect(client)
+
+      assert dump =~ "http://localhost:5984"
+      assert dump =~ "MyApp.Finch"
+    end
+  end
+
+  describe "new/1 req_options validation" do
     test "req_options rejects unknown keys with the named allowlist" do
       error =
         assert_raise ArgumentError, fn ->
@@ -101,8 +124,7 @@ defmodule AkawTest do
             retry: false,
             retry_delay: 10,
             compressed: false,
-            headers: [{"x-extra", "1"}],
-            plug: fn conn -> Req.Test.json(conn, %{}) end
+            headers: [{"x-extra", "1"}]
           ]
         )
 
@@ -115,11 +137,26 @@ defmodule AkawTest do
                  :retry,
                  :retry_delay,
                  :compressed,
-                 :headers,
-                 :plug
+                 :headers
                ])
 
       assert Keyword.get(client.req_options, :receive_timeout) == 30_000
+    end
+
+    test "req_options rejects :plug and teaches the loopback seam" do
+      # The unit suite's own migration off req_options: [plug:] closed
+      # the contract behind it — the option existed for the old test
+      # seam and dies with it.
+      error =
+        assert_raise ArgumentError, fn ->
+          Akaw.new(
+            base_url: "http://x",
+            req_options: [plug: fn conn -> Plug.Conn.send_resp(conn, 200, "{}") end]
+          )
+        end
+
+      assert error.message =~ "loopback"
+      assert error.message =~ "Testing against Akaw"
     end
 
     test "req_options rejects a function-valued :retry" do
@@ -132,27 +169,6 @@ defmodule AkawTest do
         end
 
       assert error.message =~ ":safe_transient"
-    end
-
-    test "hides credentials embedded in base_url" do
-      # Req 0.7 honours URL userinfo as Basic auth, which would otherwise make
-      # :base_url a secret — and :base_url is the one field this Inspect
-      # implementation deliberately prints. Akaw.new/1 lifts it into :auth so
-      # the redaction still holds.
-      client = Akaw.new(base_url: "http://admin:hunter2@localhost:5984")
-      dump = inspect(client)
-
-      refute dump =~ "hunter2"
-      refute dump =~ "admin"
-      assert dump =~ "http://localhost:5984"
-    end
-
-    test "still shows base_url and finch for debugging" do
-      client = Akaw.new(base_url: "http://localhost:5984", finch: MyApp.Finch)
-      dump = inspect(client)
-
-      assert dump =~ "http://localhost:5984"
-      assert dump =~ "MyApp.Finch"
     end
   end
 end

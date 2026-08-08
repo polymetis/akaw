@@ -56,6 +56,10 @@ defmodule Akaw.MixProject do
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.0"},
       {:plug, "~> 1.0", only: :test},
+      # The unit suite's test seam: every stub plug is served by a real
+      # Bandit listener on a loopback socket (see Akaw.Loopback), so unit
+      # tests exercise the production transport end to end.
+      {:bandit, "~> 1.0", only: :test},
       {:stream_data, "~> 1.0", only: :test},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false}
     ]

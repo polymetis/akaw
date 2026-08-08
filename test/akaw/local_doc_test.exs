@@ -1,6 +1,8 @@
 defmodule Akaw.LocalDocTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   setup do
     test = self()
 
@@ -14,10 +16,10 @@ defmodule Akaw.LocalDocTest do
         body: body
       })
 
-      Req.Test.json(conn, %{"ok" => true})
+      Loopback.json(conn, %{"ok" => true})
     end
 
-    {:ok, client: Akaw.new(base_url: "http://x", req_options: [plug: plug])}
+    {:ok, client: Loopback.client(plug)}
   end
 
   test "head/3 → HEAD /{db}/_local/{id}", %{client: client} do
@@ -35,7 +37,7 @@ defmodule Akaw.LocalDocTest do
              Akaw.LocalDoc.put(client, "mydb", "checkpoint", %{seq: "1-abc"})
 
     assert_receive %{method: "PUT", path: "/mydb/_local/checkpoint", body: body}
-    assert Jason.decode!(body) == %{"seq" => "1-abc"}
+    assert JSON.decode!(body) == %{"seq" => "1-abc"}
   end
 
   test "delete/5 → DELETE /{db}/_local/{id}?rev=…", %{client: client} do
@@ -59,14 +61,14 @@ defmodule Akaw.LocalDocTest do
   test "list_keys/4 POSTs {keys: [...]}", %{client: client} do
     assert {:ok, _} = Akaw.LocalDoc.list_keys(client, "mydb", ["a", "b"])
     assert_receive %{method: "POST", path: "/mydb/_local_docs", body: body}
-    assert Jason.decode!(body) == %{"keys" => ["a", "b"]}
+    assert JSON.decode!(body) == %{"keys" => ["a", "b"]}
   end
 
   test "list_queries/3 POSTs to /_local_docs/queries", %{client: client} do
     queries = [%{include_docs: true}, %{keys: ["x"]}]
     assert {:ok, _} = Akaw.LocalDoc.list_queries(client, "mydb", queries)
     assert_receive %{method: "POST", path: "/mydb/_local_docs/queries", body: body}
-    decoded = Jason.decode!(body)
+    decoded = JSON.decode!(body)
     assert length(decoded["queries"]) == 2
   end
 end

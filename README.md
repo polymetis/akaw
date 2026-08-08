@@ -160,26 +160,49 @@ CouchDB, proxies) belong on a named Finch pool as above.
 
 ## Testing against Akaw
 
-For tests, point a client at a stub with the `:plug` option:
+For tests, serve a stub plug from a loopback listener and point the
+client at it — the request travels the real transport, so your tests
+can't drift from what production sockets do:
 
 ```elixir
-client =
-  Akaw.new(
-    base_url: "http://couch.test",
-    req_options: [plug: fn conn -> Req.Test.json(conn, %{"ok" => true}) end]
+# test/support/fun_plug.ex — Bandit mounts a module plug; this one
+# closes the gap to anonymous functions.
+defmodule MyApp.FunPlug do
+  @behaviour Plug
+  def init(fun), do: fun
+  def call(conn, fun), do: fun.(conn)
+end
+
+# In a test:
+plug = fn conn ->
+  conn
+  |> Plug.Conn.put_resp_content_type("application/json")
+  |> Plug.Conn.send_resp(200, ~s({"ok":true}))
+end
+
+server =
+  start_supervised!(
+    {Bandit, plug: {MyApp.FunPlug, plug}, ip: {127, 0, 0, 1}, port: 0, startup_log: false},
+    id: make_ref()
   )
+
+{:ok, {_address, port}} = ThousandIsland.listener_info(server)
+client = Akaw.new(base_url: "http://127.0.0.1:#{port}")
 ```
 
-(Needs `{:plug, "~> 1.0", only: :test}` in your deps.) Note this seam is
-slated to change: akaw is moving to a loopback-socket test story that
-exercises the real transport, and the `:plug` spelling will move with
-it. Prefer wrapping akaw behind your own boundary if you want your
-test seams insulated from that change.
+(Needs `{:bandit, "~> 1.0", only: :test}` — and `{:plug, "~> 1.0",
+only: :test}` too, since the snippet names `Plug.Conn` directly.)
+`port: 0` binds a fresh OS-assigned port per test, so `async: true`
+suites can't collide.
+Akaw's own unit suite runs on this seam — `test/support/akaw/loopback.ex`
+in this repo is the helper form of the above, and lifting it wholesale
+is encouraged.
 
 ## Development
 
-The test suite is split in two. Unit tests stub the transport and need
-nothing running:
+The test suite is split in two. Unit tests serve stub plugs over
+loopback sockets — the real transport end to end — and need nothing
+running:
 
 ```console
 $ mix test

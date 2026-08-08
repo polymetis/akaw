@@ -1,6 +1,8 @@
 defmodule Akaw.ReshardTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   setup do
     test = self()
 
@@ -13,10 +15,10 @@ defmodule Akaw.ReshardTest do
         body: body
       })
 
-      Req.Test.json(conn, %{"ok" => true})
+      Loopback.json(conn, %{"ok" => true})
     end
 
-    {:ok, client: Akaw.new(base_url: "http://x", req_options: [plug: plug])}
+    {:ok, client: Loopback.client(plug)}
   end
 
   test "summary/1 → GET /_reshard", %{client: client} do
@@ -32,7 +34,7 @@ defmodule Akaw.ReshardTest do
   test "put_state/3 → PUT /_reshard/state with state body", %{client: client} do
     assert {:ok, _} = Akaw.Reshard.put_state(client, "stopped", reason: "maintenance")
     assert_receive %{method: "PUT", path: "/_reshard/state", body: body}
-    decoded = Jason.decode!(body)
+    decoded = JSON.decode!(body)
     assert decoded["state"] == "stopped"
     assert decoded["reason"] == "maintenance"
   end
@@ -46,7 +48,7 @@ defmodule Akaw.ReshardTest do
     job = %{type: "split", db: "users"}
     assert {:ok, _} = Akaw.Reshard.create_job(client, job)
     assert_receive %{method: "POST", path: "/_reshard/jobs", body: body}
-    assert Jason.decode!(body) == %{"type" => "split", "db" => "users"}
+    assert JSON.decode!(body) == %{"type" => "split", "db" => "users"}
   end
 
   test "job/2 → GET /_reshard/jobs/{id}", %{client: client} do
@@ -69,7 +71,7 @@ defmodule Akaw.ReshardTest do
              Akaw.Reshard.put_job_state(client, "abc-123", "stopped", reason: "user-requested")
 
     assert_receive %{method: "PUT", path: "/_reshard/jobs/abc-123/state", body: body}
-    decoded = Jason.decode!(body)
+    decoded = JSON.decode!(body)
     assert decoded["state"] == "stopped"
     assert decoded["reason"] == "user-requested"
   end

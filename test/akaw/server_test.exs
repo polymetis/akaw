@@ -1,6 +1,8 @@
 defmodule Akaw.ServerTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   setup do
     test = self()
 
@@ -14,11 +16,10 @@ defmodule Akaw.ServerTest do
         body: body
       })
 
-      Req.Test.json(conn, %{"ok" => true})
+      Loopback.json(conn, %{"ok" => true})
     end
 
-    client = Akaw.new(base_url: "http://couch.example", req_options: [plug: plug])
-    {:ok, client: client}
+    {:ok, client: Loopback.client(plug)}
   end
 
   test "info/1 → GET /", %{client: client} do
@@ -63,7 +64,7 @@ defmodule Akaw.ServerTest do
   test "dbs_info/2 POSTs a {keys: [...]} body", %{client: client} do
     assert {:ok, _} = Akaw.Server.dbs_info(client, ["a", "b"])
     assert_receive %{method: "POST", path: "/_dbs_info", body: body}
-    assert Jason.decode!(body) == %{"keys" => ["a", "b"]}
+    assert JSON.decode!(body) == %{"keys" => ["a", "b"]}
   end
 
   test "active_tasks/1 → GET /_active_tasks", %{client: client} do
@@ -76,7 +77,7 @@ defmodule Akaw.ServerTest do
              Akaw.Server.replicate(client, %{source: "a", target: "b", continuous: true})
 
     assert_receive %{method: "POST", path: "/_replicate", body: body}
-    decoded = Jason.decode!(body)
+    decoded = JSON.decode!(body)
     assert decoded["source"] == "a"
     assert decoded["target"] == "b"
     assert decoded["continuous"] == true
@@ -123,7 +124,7 @@ defmodule Akaw.ServerTest do
              })
 
     assert_receive %{method: "POST", path: "/_search_analyze", body: body}
-    decoded = Jason.decode!(body)
+    decoded = JSON.decode!(body)
     assert decoded["analyzer"] == "standard"
     assert decoded["text"] == "running shoes"
   end
@@ -136,26 +137,28 @@ defmodule Akaw.ServerTest do
              })
 
     assert_receive %{method: "POST", path: "/_nouveau_analyze", body: body}
-    decoded = Jason.decode!(body)
+    decoded = JSON.decode!(body)
     assert decoded["analyzer"] == "standard"
     assert decoded["text"] == "hello world"
   end
 
   test "stream_db_updates/2 forces feed=continuous and forwards other opts" do
+    # Observed via ETS, not send/assert_receive: consuming a lazy stream
+    # drains the caller's mailbox, so a message sent mid-stream would be
+    # eaten before the test could assert on it. (The plug also runs in a
+    # Bandit connection-handler process, so Process.put/get can't reach the test.)
+    seen = :ets.new(:akaw_db_updates_qs, [:public])
+
     plug = fn conn ->
-      Process.put(:akaw_db_updates_qs, conn.query_string)
-      Req.Test.json(conn, %{})
+      :ets.insert(seen, {:qs, conn.query_string})
+      Loopback.json(conn, %{})
     end
 
-    client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+    client = Loopback.client(plug)
 
-    try do
-      client |> Akaw.Server.stream_db_updates(since: "now") |> Enum.take(1)
-    rescue
-      _ -> :ok
-    end
+    client |> Akaw.Server.stream_db_updates(since: "now") |> Enum.take(1)
 
-    qs = Process.get(:akaw_db_updates_qs) || ""
+    assert [{:qs, qs}] = :ets.lookup(seen, :qs)
     assert qs =~ "feed=continuous"
     assert qs =~ "since=now"
   end

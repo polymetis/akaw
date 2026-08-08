@@ -1,6 +1,8 @@
 defmodule Akaw.SessionServerTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   defp counting_session_plug do
     counter = :counters.new(1, [])
 
@@ -13,7 +15,7 @@ defmodule Akaw.SessionServerTest do
       |> Plug.Conn.put_resp_content_type("application/json")
       |> Plug.Conn.send_resp(
         200,
-        Jason.encode!(%{"ok" => true, "name" => "admin", "roles" => ["_admin"]})
+        JSON.encode!(%{"ok" => true, "name" => "admin", "roles" => ["_admin"]})
       )
     end
 
@@ -22,8 +24,8 @@ defmodule Akaw.SessionServerTest do
 
   # Same as `counting_session_plug/0`, but also tells `test_pid` about every
   # call, so a test can wait for the Nth refresh instead of sleeping and
-  # hoping. The SessionServer runs the request itself, so the message comes
-  # from its process — the test just receives.
+  # hoping. The plug runs in a Bandit connection-handler process, so the message comes
+  # from there — the test just receives.
   defp announcing_session_plug(test_pid) do
     {plug, counter} = counting_session_plug()
 
@@ -39,10 +41,9 @@ defmodule Akaw.SessionServerTest do
   defp start_server(plug, opts \\ []) do
     base_opts = [
       name: :"akaw_session_test_#{System.unique_integer([:positive])}",
-      base_url: "http://x",
+      base_url: Loopback.url(plug),
       username: "admin",
-      password: "pw",
-      client_opts: [req_options: [plug: plug]]
+      password: "pw"
     ]
 
     {:ok, pid} = start_supervised({Akaw.SessionServer, Keyword.merge(base_opts, opts)})
@@ -70,10 +71,9 @@ defmodule Akaw.SessionServerTest do
       start_supervised(
         {Akaw.SessionServer,
          name: :"akaw_session_default_interval_#{System.unique_integer([:positive])}",
-         base_url: "http://x",
+         base_url: Loopback.url(plug),
          username: "admin",
-         password: "pw",
-         client_opts: [req_options: [plug: plug]]}
+         password: "pw"}
       )
 
     assert :sys.get_state(pid).interval <= div(couch_default_cookie_lifetime, 2)
@@ -184,13 +184,13 @@ defmodule Akaw.SessionServerTest do
           conn
           |> Plug.Conn.put_resp_header("set-cookie", "AuthSession=initial; Path=/")
           |> Plug.Conn.put_resp_content_type("application/json")
-          |> Plug.Conn.send_resp(200, Jason.encode!(%{"ok" => true}))
+          |> Plug.Conn.send_resp(200, JSON.encode!(%{"ok" => true}))
         else
           conn
           |> Plug.Conn.put_resp_content_type("application/json")
           |> Plug.Conn.send_resp(
             401,
-            Jason.encode!(%{"error" => "unauthorized", "reason" => "denied"})
+            JSON.encode!(%{"error" => "unauthorized", "reason" => "denied"})
           )
         end
       end
@@ -215,7 +215,7 @@ defmodule Akaw.SessionServerTest do
           conn
           |> Plug.Conn.put_resp_header("set-cookie", "AuthSession=initial; Path=/")
           |> Plug.Conn.put_resp_content_type("application/json")
-          |> Plug.Conn.send_resp(200, Jason.encode!(%{"ok" => true}))
+          |> Plug.Conn.send_resp(200, JSON.encode!(%{"ok" => true}))
 
         true ->
           # Subsequent refresh attempts: 401
@@ -223,7 +223,7 @@ defmodule Akaw.SessionServerTest do
           |> Plug.Conn.put_resp_content_type("application/json")
           |> Plug.Conn.send_resp(
             401,
-            Jason.encode!(%{"error" => "unauthorized", "reason" => "no"})
+            JSON.encode!(%{"error" => "unauthorized", "reason" => "no"})
           )
       end
     end
@@ -258,7 +258,7 @@ defmodule Akaw.SessionServerTest do
 
       conn
       |> Plug.Conn.put_resp_content_type("application/json")
-      |> Plug.Conn.send_resp(200, Jason.encode!(%{"ok" => true}))
+      |> Plug.Conn.send_resp(200, JSON.encode!(%{"ok" => true}))
     end
 
     pid = start_server(plug)
@@ -274,7 +274,7 @@ defmodule Akaw.SessionServerTest do
     plug = fn conn ->
       conn
       |> Plug.Conn.put_resp_content_type("application/json")
-      |> Plug.Conn.send_resp(200, Jason.encode!(%{"ok" => true}))
+      |> Plug.Conn.send_resp(200, JSON.encode!(%{"ok" => true}))
     end
 
     Process.flag(:trap_exit, true)
@@ -282,10 +282,9 @@ defmodule Akaw.SessionServerTest do
     assert {:error, %Akaw.Error{error: "no_auth_cookie"}} =
              Akaw.SessionServer.start_link(
                name: :"akaw_session_no_cookie_#{System.unique_integer([:positive])}",
-               base_url: "http://x",
+               base_url: Loopback.url(plug),
                username: "admin",
-               password: "pw",
-               client_opts: [req_options: [plug: plug]]
+               password: "pw"
              )
   end
 
@@ -421,7 +420,7 @@ defmodule Akaw.SessionServerTest do
     plug = fn conn ->
       conn
       |> Plug.Conn.put_resp_content_type("application/json")
-      |> Plug.Conn.send_resp(401, Jason.encode!(%{"error" => "unauthorized", "reason" => "bad"}))
+      |> Plug.Conn.send_resp(401, JSON.encode!(%{"error" => "unauthorized", "reason" => "bad"}))
     end
 
     name = :"akaw_session_init_fail_#{System.unique_integer([:positive])}"
@@ -431,10 +430,10 @@ defmodule Akaw.SessionServerTest do
     assert {:error, _} =
              Akaw.SessionServer.start_link(
                name: name,
-               base_url: "http://x",
+               base_url: Loopback.url(plug),
                username: "admin",
                password: "wrong",
-               client_opts: [req_options: [plug: plug, retry: false]]
+               client_opts: [req_options: [retry: false]]
              )
   end
 end

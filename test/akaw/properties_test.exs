@@ -2,6 +2,7 @@ defmodule Akaw.PropertiesTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
+  alias Akaw.Loopback
   alias Akaw.{LineStream, Params}
 
   describe "Akaw.LineStream.lines/1" do
@@ -63,7 +64,7 @@ defmodule Akaw.PropertiesTest do
         result = Params.encode_json_keys([{key, value}])
         assert [{^key, encoded}] = result
         assert is_binary(encoded)
-        assert Jason.decode!(encoded) == jsonify(value)
+        assert JSON.decode!(encoded) == jsonify(value)
       end
     end
 
@@ -90,7 +91,7 @@ defmodule Akaw.PropertiesTest do
 
         assert {:limit, ^limit} = List.keyfind(result, :limit, 0)
         {:startkey, encoded} = List.keyfind(result, :startkey, 0)
-        assert Jason.decode!(encoded) == jsonify(json_v)
+        assert JSON.decode!(encoded) == jsonify(json_v)
       end
     end
   end
@@ -115,23 +116,24 @@ defmodule Akaw.PropertiesTest do
 
   describe "basic auth header" do
     property "Authorization: Basic roundtrips through Base.decode64 to 'user:pass'" do
+      # One listener for the whole property: the plug is case-invariant
+      # (it only echoes the auth header), and a listener per generated
+      # case would pile up ~100 supervised listener trees before the
+      # test exits. Only the client varies.
+      test = self()
+
+      plug = fn conn ->
+        send(test, Plug.Conn.get_req_header(conn, "authorization"))
+        Loopback.json(conn, %{})
+      end
+
+      url = Loopback.url(plug)
+
       check all(
               user <- string(:alphanumeric, min_length: 1, max_length: 20),
               pass <- string(:printable, max_length: 30)
             ) do
-        test = self()
-
-        plug = fn conn ->
-          send(test, Plug.Conn.get_req_header(conn, "authorization"))
-          Req.Test.json(conn, %{})
-        end
-
-        client =
-          Akaw.new(
-            base_url: "http://x",
-            auth: {:basic, user, pass},
-            req_options: [plug: plug]
-          )
+        client = Akaw.new(base_url: url, auth: {:basic, user, pass})
 
         assert {:ok, _} = Akaw.Server.info(client)
         assert_receive [auth_header]
@@ -161,8 +163,8 @@ defmodule Akaw.PropertiesTest do
     ])
   end
 
-  # Round-trip a value through Jason — atom map keys become strings, etc.
-  defp jsonify(v), do: v |> Jason.encode!() |> Jason.decode!()
+  # Round-trip a value through JSON — atom map keys become strings, etc.
+  defp jsonify(v), do: v |> JSON.encode!() |> JSON.decode!()
 
   # Split a binary into chunks of the given byte sizes. If `sizes` runs
   # out before the binary, the rest is emitted as one final chunk.

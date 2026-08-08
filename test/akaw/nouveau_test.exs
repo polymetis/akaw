@@ -1,6 +1,8 @@
 defmodule Akaw.NouveauTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   setup do
     test = self()
 
@@ -11,10 +13,10 @@ defmodule Akaw.NouveauTest do
         query_string: conn.query_string
       })
 
-      Req.Test.json(conn, %{"hits" => []})
+      Loopback.json(conn, %{"hits" => []})
     end
 
-    {:ok, client: Akaw.new(base_url: "http://x", req_options: [plug: plug])}
+    {:ok, client: Loopback.client(plug)}
   end
 
   test "search/5 → GET /_nouveau/{index}", %{client: client} do
@@ -35,7 +37,7 @@ defmodule Akaw.NouveauTest do
     assert_receive %{query_string: qs}
     decoded = URI.decode_query(qs)
     assert decoded["sort"] == ~s|["price"]|
-    assert Jason.decode!(decoded["ranges"]) == %{"price" => %{"cheap" => "[0 TO 50]"}}
+    assert JSON.decode!(decoded["ranges"]) == %{"price" => %{"cheap" => "[0 TO 50]"}}
   end
 
   test "info/4 → GET /_nouveau_info/{index}", %{client: client} do

@@ -6,15 +6,17 @@ defmodule Akaw.EncodingTest do
   # (`URI.encode(s, &URI.char_unreserved?/1)`) plus special-cased prefix
   # handling for `_design/` and `_local/`.
 
+  alias Akaw.Loopback
+
   defp recording_client do
     test = self()
 
     plug = fn conn ->
       send(test, conn.request_path)
-      Req.Test.json(conn, %{})
+      Loopback.json(conn, %{})
     end
 
-    Akaw.new(base_url: "http://x", req_options: [plug: plug, retry: false])
+    Loopback.client(plug, req_options: [retry: false])
   end
 
   describe "doc id encoding" do

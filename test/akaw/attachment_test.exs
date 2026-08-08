@@ -1,6 +1,8 @@
 defmodule Akaw.AttachmentTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   defp recording_client(reply_fn) do
     test = self()
 
@@ -18,7 +20,7 @@ defmodule Akaw.AttachmentTest do
       reply_fn.(conn)
     end
 
-    Akaw.new(base_url: "http://x", req_options: [plug: plug])
+    Loopback.client(plug)
   end
 
   describe "head/4" do
@@ -30,9 +32,9 @@ defmodule Akaw.AttachmentTest do
 
     test "404 surfaces as %Akaw.Error{}" do
       client =
-        Akaw.new(
-          base_url: "http://x",
-          req_options: [plug: fn conn -> Plug.Conn.send_resp(conn, 404, "") end, retry: false]
+        Loopback.client(
+          fn conn -> Plug.Conn.send_resp(conn, 404, "") end,
+          req_options: [retry: false]
         )
 
       assert {:error, %Akaw.Error{status: 404}} =
@@ -77,7 +79,7 @@ defmodule Akaw.AttachmentTest do
     test "→ PUT /{db}/{doc}/{att} with body, content-type, and rev" do
       client =
         recording_client(fn conn ->
-          Req.Test.json(conn, %{"id" => "doc1", "rev" => "2-x", "ok" => true})
+          Loopback.json(conn, %{"id" => "doc1", "rev" => "2-x", "ok" => true})
         end)
 
       assert {:ok, _} =
@@ -102,7 +104,7 @@ defmodule Akaw.AttachmentTest do
     test "defaults content-type to application/octet-stream" do
       client =
         recording_client(fn conn ->
-          Req.Test.json(conn, %{"ok" => true})
+          Loopback.json(conn, %{"ok" => true})
         end)
 
       assert {:ok, _} =
@@ -115,7 +117,7 @@ defmodule Akaw.AttachmentTest do
 
   describe "delete/6" do
     test "→ DELETE /{db}/{doc}/{att}?rev=…" do
-      client = recording_client(fn conn -> Req.Test.json(conn, %{"ok" => true}) end)
+      client = recording_client(fn conn -> Loopback.json(conn, %{"ok" => true}) end)
 
       assert {:ok, _} =
                Akaw.Attachment.delete(client, "mydb", "doc1", "thumb.png", "2-y")
@@ -124,7 +126,7 @@ defmodule Akaw.AttachmentTest do
     end
 
     test "positional rev beats a stray :rev in opts" do
-      client = recording_client(fn conn -> Req.Test.json(conn, %{"ok" => true}) end)
+      client = recording_client(fn conn -> Loopback.json(conn, %{"ok" => true}) end)
 
       assert {:ok, _} =
                Akaw.Attachment.delete(client, "mydb", "doc1", "thumb.png", "2-y", rev: "1-stale")
@@ -139,10 +141,10 @@ defmodule Akaw.AttachmentTest do
 
     plug = fn conn ->
       send(test, conn.request_path)
-      Req.Test.json(conn, %{"ok" => true})
+      Loopback.json(conn, %{"ok" => true})
     end
 
-    client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+    client = Loopback.client(plug)
 
     assert {:ok, _} =
              Akaw.Attachment.put(client, "mydb", "_design/myddoc", "logo.png", <<0>>,

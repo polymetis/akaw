@@ -1,6 +1,8 @@
 defmodule Akaw.FindTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   setup do
     test = self()
 
@@ -13,10 +15,10 @@ defmodule Akaw.FindTest do
         body: body
       })
 
-      Req.Test.json(conn, %{"docs" => []})
+      Loopback.json(conn, %{"docs" => []})
     end
 
-    {:ok, client: Akaw.new(base_url: "http://x", req_options: [plug: plug])}
+    {:ok, client: Loopback.client(plug)}
   end
 
   test "find/3 POSTs to /{db}/_find with the query body", %{client: client} do
@@ -28,7 +30,7 @@ defmodule Akaw.FindTest do
 
     assert {:ok, _} = Akaw.Find.find(client, "users", query)
     assert_receive %{method: "POST", path: "/users/_find", body: body}
-    decoded = Jason.decode!(body)
+    decoded = JSON.decode!(body)
     assert decoded["selector"] == %{"age" => %{"$gt" => 21}}
     assert decoded["limit"] == 25
   end
@@ -36,7 +38,7 @@ defmodule Akaw.FindTest do
   test "explain/3 POSTs to /{db}/_explain with the query body", %{client: client} do
     assert {:ok, _} = Akaw.Find.explain(client, "users", %{selector: %{name: "alice"}})
     assert_receive %{method: "POST", path: "/users/_explain", body: body}
-    assert Jason.decode!(body) == %{"selector" => %{"name" => "alice"}}
+    assert JSON.decode!(body) == %{"selector" => %{"name" => "alice"}}
   end
 
   test "create_index/3 POSTs the index definition", %{client: client} do
@@ -48,7 +50,7 @@ defmodule Akaw.FindTest do
 
     assert {:ok, _} = Akaw.Find.create_index(client, "users", index)
     assert_receive %{method: "POST", path: "/users/_index", body: body}
-    decoded = Jason.decode!(body)
+    decoded = JSON.decode!(body)
     assert decoded["name"] == "by_name_email"
     assert decoded["index"]["fields"] == ["name", "email"]
   end

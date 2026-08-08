@@ -1,6 +1,8 @@
 defmodule Akaw.PartitionTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   setup do
     test = self()
 
@@ -14,10 +16,10 @@ defmodule Akaw.PartitionTest do
         body: body
       })
 
-      Req.Test.json(conn, %{"rows" => []})
+      Loopback.json(conn, %{"rows" => []})
     end
 
-    {:ok, client: Akaw.new(base_url: "http://x", req_options: [plug: plug])}
+    {:ok, client: Loopback.client(plug)}
   end
 
   test "info/3 → GET /{db}/_partition/{p}", %{client: client} do
@@ -47,7 +49,7 @@ defmodule Akaw.PartitionTest do
     query = %{selector: %{tenant: "t42", active: true}}
     assert {:ok, _} = Akaw.Partition.find(client, "mydb", "t42", query)
     assert_receive %{method: "POST", path: "/mydb/_partition/t42/_find", body: body}
-    assert Jason.decode!(body) == %{"selector" => %{"tenant" => "t42", "active" => true}}
+    assert JSON.decode!(body) == %{"selector" => %{"tenant" => "t42", "active" => true}}
   end
 
   test "explain/4 → POST /.../_partition/{p}/_explain", %{client: client} do
@@ -60,9 +62,11 @@ defmodule Akaw.PartitionTest do
   describe "streaming variants" do
     # These three function bodies had zero test coverage — the one
     # genuinely untested feature the audit's coverage run surfaced.
-    # Process.put rather than send: the lazy streams drain the consuming
-    # process's mailbox, so a message-based probe gets eaten.
-    defp partition_stream_plug(container) do
+    # ETS rather than send: the lazy streams drain the consuming
+    # process's mailbox, so a message-based probe gets eaten — and the
+    # plug runs in a Bandit connection-handler process, so Process.put wouldn't
+    # reach the test either.
+    defp partition_stream_plug(container, seen) do
       body =
         ~s({"total_rows":2,"offset":0,"#{container}":[\n) <>
           ~s({"id":"t:a","key":"t:a","value":1},\n) <>
@@ -71,12 +75,16 @@ defmodule Akaw.PartitionTest do
       fn conn ->
         {:ok, request_body, conn} = Plug.Conn.read_body(conn)
 
-        Process.put(:akaw_partition_stream_req, %{
-          method: conn.method,
-          path: conn.request_path,
-          query_string: conn.query_string,
-          body: request_body
-        })
+        :ets.insert(
+          seen,
+          {:akaw_partition_stream_req,
+           %{
+             method: conn.method,
+             path: conn.request_path,
+             query_string: conn.query_string,
+             body: request_body
+           }}
+        )
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
@@ -84,48 +92,54 @@ defmodule Akaw.PartitionTest do
       end
     end
 
-    defp partition_stream_client(container) do
-      Akaw.new(base_url: "http://x", req_options: [plug: partition_stream_plug(container)])
+    defp partition_stream_client(container, seen) do
+      Loopback.client(partition_stream_plug(container, seen))
     end
 
     test "stream_all_docs/4 streams decoded rows from the partition path" do
+      seen = :ets.new(:akaw_partition_stream_all_docs, [:public])
+
       rows =
-        partition_stream_client("rows")
+        partition_stream_client("rows", seen)
         |> Akaw.Partition.stream_all_docs("mydb", "tenant42", startkey: "t:")
         |> Enum.to_list()
 
       assert [%{"id" => "t:a"}, %{"id" => "t:b"}] = rows
 
-      request = Process.get(:akaw_partition_stream_req)
+      [{_, request}] = :ets.lookup(seen, :akaw_partition_stream_req)
       assert request.method == "GET"
       assert request.path == "/mydb/_partition/tenant42/_all_docs"
       assert URI.decode_query(request.query_string)["startkey"] == ~s|"t:"|
     end
 
     test "stream_view/6 streams decoded rows from the partition view path" do
+      seen = :ets.new(:akaw_partition_stream_view, [:public])
+
       rows =
-        partition_stream_client("rows")
+        partition_stream_client("rows", seen)
         |> Akaw.Partition.stream_view("mydb", "tenant42", "d", "by_n")
         |> Enum.to_list()
 
       assert [%{"id" => "t:a"}, %{"id" => "t:b"}] = rows
 
-      request = Process.get(:akaw_partition_stream_req)
+      [{_, request}] = :ets.lookup(seen, :akaw_partition_stream_req)
       assert request.path == "/mydb/_partition/tenant42/_design/d/_view/by_n"
     end
 
     test "stream_find/4 POSTs the query and streams the docs container" do
+      seen = :ets.new(:akaw_partition_stream_find, [:public])
+
       rows =
-        partition_stream_client("docs")
+        partition_stream_client("docs", seen)
         |> Akaw.Partition.stream_find("mydb", "tenant42", %{selector: %{n: 1}})
         |> Enum.to_list()
 
       assert [%{"id" => "t:a"}, %{"id" => "t:b"}] = rows
 
-      request = Process.get(:akaw_partition_stream_req)
+      [{_, request}] = :ets.lookup(seen, :akaw_partition_stream_req)
       assert request.method == "POST"
       assert request.path == "/mydb/_partition/tenant42/_find"
-      assert Jason.decode!(request.body) == %{"selector" => %{"n" => 1}}
+      assert JSON.decode!(request.body) == %{"selector" => %{"n" => 1}}
     end
   end
 end

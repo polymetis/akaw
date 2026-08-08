@@ -1,6 +1,8 @@
 defmodule Akaw.DesignDocTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   setup do
     test = self()
 
@@ -15,10 +17,10 @@ defmodule Akaw.DesignDocTest do
         headers: conn.req_headers
       })
 
-      Req.Test.json(conn, %{"ok" => true})
+      Loopback.json(conn, %{"ok" => true})
     end
 
-    {:ok, client: Akaw.new(base_url: "http://x", req_options: [plug: plug])}
+    {:ok, client: Loopback.client(plug)}
   end
 
   test "head/3 → HEAD /{db}/_design/{ddoc}", %{client: client} do
@@ -35,7 +37,7 @@ defmodule Akaw.DesignDocTest do
     ddoc = %{language: "javascript", views: %{by_name: %{map: "function(d){...}"}}}
     assert {:ok, _} = Akaw.DesignDoc.put(client, "mydb", "myddoc", ddoc)
     assert_receive %{method: "PUT", path: "/mydb/_design/myddoc", body: body}
-    assert Jason.decode!(body)["language"] == "javascript"
+    assert JSON.decode!(body)["language"] == "javascript"
   end
 
   test "delete/5 → DELETE /{db}/_design/{ddoc}?rev=…", %{client: client} do

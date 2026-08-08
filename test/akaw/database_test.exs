@@ -1,6 +1,8 @@
 defmodule Akaw.DatabaseTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   setup do
     test = self()
 
@@ -14,10 +16,10 @@ defmodule Akaw.DatabaseTest do
         body: body
       })
 
-      Req.Test.json(conn, %{"ok" => true})
+      Loopback.json(conn, %{"ok" => true})
     end
 
-    {:ok, client: Akaw.new(base_url: "http://couch.example", req_options: [plug: plug])}
+    {:ok, client: Loopback.client(plug)}
   end
 
   test "head/2 returns :ok on a 200", %{client: client} do
@@ -27,7 +29,7 @@ defmodule Akaw.DatabaseTest do
 
   test "head/2 surfaces a 404 as %Akaw.Error{}" do
     plug = fn conn -> Plug.Conn.send_resp(conn, 404, "") end
-    client = Akaw.new(base_url: "http://x", req_options: [plug: plug, retry: false])
+    client = Loopback.client(plug, req_options: [retry: false])
 
     assert {:error, %Akaw.Error{status: 404}} = Akaw.Database.head(client, "missing")
   end
@@ -58,7 +60,7 @@ defmodule Akaw.DatabaseTest do
   test "post/3 POSTs the doc body", %{client: client} do
     assert {:ok, _} = Akaw.Database.post(client, "mydb", %{name: "alice", age: 30})
     assert_receive %{method: "POST", path: "/mydb", body: body}
-    assert Jason.decode!(body) == %{"name" => "alice", "age" => 30}
+    assert JSON.decode!(body) == %{"name" => "alice", "age" => 30}
   end
 
   test "compact/2 → POST /{db}/_compact", %{client: client} do
@@ -89,7 +91,7 @@ defmodule Akaw.DatabaseTest do
   test "put_revs_limit/3 → PUT /{db}/_revs_limit with integer body", %{client: client} do
     assert {:ok, _} = Akaw.Database.put_revs_limit(client, "mydb", 500)
     assert_receive %{method: "PUT", path: "/mydb/_revs_limit", body: body}
-    assert Jason.decode!(body) == 500
+    assert JSON.decode!(body) == 500
   end
 
   test "URL-encodes db names with special characters", %{client: client} do

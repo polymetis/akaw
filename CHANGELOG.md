@@ -121,7 +121,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`:req_options` is now a narrow, named allowlist** —
   `:receive_timeout`, `:pool_timeout`, `:retry`/`:retry_delay` (plain
-  requests only), `:compressed`, `:headers`, `:plug` — and anything else
+  requests only), `:compressed`, `:headers` — and anything else
   raises `ArgumentError` at `Akaw.new/1`. The open passthrough welded
   akaw's public contract to the underlying HTTP client's option surface
   (and let secrets ride in unredactable positions); the named set
@@ -155,6 +155,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bytes rather than auto-decoded — consistent with the archive
   content-type posture above; CouchDB's own API always answers
   `application/json`.
+
+- **The test seam is a real socket, and `:plug` left the contract.**
+  Akaw's whole unit suite now serves its stub plugs from Bandit
+  listeners on OS-assigned loopback ports — pool checkout, HTTP
+  framing, and sockets are the production code path in every unit test,
+  where the previous seam replayed responses through an in-process
+  adapter that bypassed the transport entirely. The old seam's
+  `req_options: [plug: ...]` spelling left the contract with it —
+  passing it raises with the replacement, and the README's "Testing
+  against Akaw" section carries the loopback recipe (akaw's own
+  `test/support/akaw/loopback.ex` is written to be lifted wholesale,
+  and diagnoses its own fixtures: a stub that crashes answers 418
+  carrying the formatted exception, so a broken stub can never satisfy
+  an assertion meant for CouchDB). Stubbing through a real listener
+  also changed what tests may assume: stub plugs run in the listener's
+  connection-handler process, and chunked bodies arrive as genuine
+  chunk frames — assertions are content-based, never
+  delivery-count-based.
+
+  Alongside, an integration probe pins the facts the coming transport
+  swap's decode gate rests on, against a real CouchDB 3.5.1: every JSON
+  endpoint class — including error bodies and `_changes` in
+  normal/longpoll/continuous modes — answers `application/json` even
+  when the request carries no `Accept` header at all (the 1.x-era
+  `text/plain` habit is gone), while attachments keep their stored
+  type, `feed=eventsource` is `text/event-stream`, and design functions
+  choose their own content-type.
 
 ### Fixed
 

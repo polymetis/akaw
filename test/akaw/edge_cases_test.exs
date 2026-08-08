@@ -5,6 +5,8 @@ defmodule Akaw.EdgeCasesTest do
   # auth-encoding quirks, header dedup interactions, and Akaw.Params
   # encoding for less common value types.
 
+  alias Akaw.Loopback
+
   defp recording_client(client_opts \\ []) do
     test = self()
 
@@ -18,10 +20,10 @@ defmodule Akaw.EdgeCasesTest do
         headers: conn.req_headers
       })
 
-      Req.Test.json(conn, %{})
+      Loopback.json(conn, %{})
     end
 
-    Akaw.new([base_url: "http://x", req_options: [plug: plug, retry: false]] ++ client_opts)
+    Loopback.client(plug, [req_options: [retry: false]] ++ client_opts)
   end
 
   describe "empty bulk inputs (still go through, body is just empty)" do
@@ -29,42 +31,42 @@ defmodule Akaw.EdgeCasesTest do
       client = recording_client()
       assert {:ok, _} = Akaw.Documents.bulk_docs(client, "db", [])
       assert_receive %{method: "POST", path: "/db/_bulk_docs", body: body}
-      assert Jason.decode!(body) == %{"docs" => []}
+      assert JSON.decode!(body) == %{"docs" => []}
     end
 
     test "bulk_get with empty list" do
       client = recording_client()
       assert {:ok, _} = Akaw.Documents.bulk_get(client, "db", [])
       assert_receive %{method: "POST", path: "/db/_bulk_get", body: body}
-      assert Jason.decode!(body) == %{"docs" => []}
+      assert JSON.decode!(body) == %{"docs" => []}
     end
 
     test "all_docs_keys with empty keys list" do
       client = recording_client()
       assert {:ok, _} = Akaw.Documents.all_docs_keys(client, "db", [])
       assert_receive %{method: "POST", path: "/db/_all_docs", body: body}
-      assert Jason.decode!(body) == %{"keys" => []}
+      assert JSON.decode!(body) == %{"keys" => []}
     end
 
     test "all_docs_queries with empty queries list" do
       client = recording_client()
       assert {:ok, _} = Akaw.Documents.all_docs_queries(client, "db", [])
       assert_receive %{path: "/db/_all_docs/queries", body: body}
-      assert Jason.decode!(body) == %{"queries" => []}
+      assert JSON.decode!(body) == %{"queries" => []}
     end
 
     test "purge with empty map" do
       client = recording_client()
       assert {:ok, _} = Akaw.Purge.purge(client, "db", %{})
       assert_receive %{method: "POST", path: "/db/_purge", body: body}
-      assert Jason.decode!(body) == %{}
+      assert JSON.decode!(body) == %{}
     end
 
     test "find with empty selector" do
       client = recording_client()
       assert {:ok, _} = Akaw.Find.find(client, "db", %{selector: %{}})
       assert_receive %{method: "POST", path: "/db/_find", body: body}
-      assert Jason.decode!(body) == %{"selector" => %{}}
+      assert JSON.decode!(body) == %{"selector" => %{}}
     end
   end
 
@@ -72,19 +74,14 @@ defmodule Akaw.EdgeCasesTest do
     defp capture_auth_plug(test) do
       fn conn ->
         send(test, Plug.Conn.get_req_header(conn, "authorization"))
-        Req.Test.json(conn, %{})
+        Loopback.json(conn, %{})
       end
     end
 
     test "password with @ and : passes through unencoded in basic auth" do
       test = self()
 
-      client =
-        Akaw.new(
-          base_url: "http://x",
-          auth: {:basic, "alice", "p@ss:word"},
-          req_options: [plug: capture_auth_plug(test)]
-        )
+      client = Loopback.client(capture_auth_plug(test), auth: {:basic, "alice", "p@ss:word"})
 
       assert {:ok, _} = Akaw.Server.info(client)
       assert_receive [auth]
@@ -95,12 +92,7 @@ defmodule Akaw.EdgeCasesTest do
     test "empty password" do
       test = self()
 
-      client =
-        Akaw.new(
-          base_url: "http://x",
-          auth: {:basic, "alice", ""},
-          req_options: [plug: capture_auth_plug(test)]
-        )
+      client = Loopback.client(capture_auth_plug(test), auth: {:basic, "alice", ""})
 
       assert {:ok, _} = Akaw.Server.info(client)
       assert_receive [auth]
@@ -110,12 +102,7 @@ defmodule Akaw.EdgeCasesTest do
     test "Unicode password is sent as raw UTF-8 bytes (CouchDB will decode)" do
       test = self()
 
-      client =
-        Akaw.new(
-          base_url: "http://x",
-          auth: {:basic, "alice", "pässwörd"},
-          req_options: [plug: capture_auth_plug(test)]
-        )
+      client = Loopback.client(capture_auth_plug(test), auth: {:basic, "alice", "pässwörd"})
 
       assert {:ok, _} = Akaw.Server.info(client)
       assert_receive [auth]
@@ -130,15 +117,10 @@ defmodule Akaw.EdgeCasesTest do
       plug = fn conn ->
         cookies = for {name, v} <- conn.req_headers, String.downcase(name) == "cookie", do: v
         send(test, cookies)
-        Req.Test.json(conn, %{})
+        Loopback.json(conn, %{})
       end
 
-      client =
-        Akaw.new(
-          base_url: "http://x",
-          headers: [{"Cookie", "AuthSession=OLD"}],
-          req_options: [plug: plug]
-        )
+      client = Loopback.client(plug, headers: [{"Cookie", "AuthSession=OLD"}])
 
       Akaw.Request.request(client, :get, "/", headers: [{"cookie", "AuthSession=NEW"}])
 
@@ -153,14 +135,13 @@ defmodule Akaw.EdgeCasesTest do
           for {name, v} <- conn.req_headers, String.downcase(name) == "x-test", do: v
 
         send(test, accepts)
-        Req.Test.json(conn, %{})
+        Loopback.json(conn, %{})
       end
 
       client =
-        Akaw.new(
-          base_url: "http://x",
+        Loopback.client(plug,
           headers: [{"x-test", "from-client"}],
-          req_options: [plug: plug, headers: [{"X-Test", "from-req-opts"}]]
+          req_options: [headers: [{"X-Test", "from-req-opts"}]]
         )
 
       Akaw.Request.request(client, :get, "/", headers: [{"X-TEST", "from-call"}])
@@ -196,7 +177,7 @@ defmodule Akaw.EdgeCasesTest do
 
     test "nested map" do
       assert [{:key, json}] = Params.encode_json_keys(key: %{a: 1, b: 2})
-      assert Jason.decode!(json) == %{"a" => 1, "b" => 2}
+      assert JSON.decode!(json) == %{"a" => 1, "b" => 2}
     end
 
     test "leaves non-JSON-typed keys untouched" do
