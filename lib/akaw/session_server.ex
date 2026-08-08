@@ -47,7 +47,9 @@ defmodule Akaw.SessionServer do
   ## On failure
 
   If the initial login fails, the GenServer crashes — the supervisor
-  decides whether to retry. If a *refresh* fails after a successful
+  decides whether to retry. A 200 that grants no `AuthSession` cookie
+  counts as failure: this server exists to hold a cookie, so it refuses
+  to start without one. If a *refresh* fails after a successful
   initial login, the existing client stays in place and we retry on a
   short backoff (60s or the configured interval, whichever is smaller).
   Callers continue to see the most recent good client.
@@ -111,7 +113,11 @@ defmodule Akaw.SessionServer do
 
     base_client = Akaw.new([base_url: base_url] ++ client_opts)
 
-    case Session.create(base_client, username, password_fn.()) do
+    # Session.refresh/3 rather than create/3: refresh enforces that an
+    # AuthSession cookie actually came back, which is this server's whole
+    # reason to exist. On the cookie-less base_client the strip is a no-op,
+    # so the request itself is identical.
+    case Session.refresh(base_client, username, password_fn.()) do
       {:ok, authed, _body} ->
         schedule_refresh(interval)
 

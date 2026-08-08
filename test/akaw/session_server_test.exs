@@ -228,6 +228,53 @@ defmodule Akaw.SessionServerTest do
     assert {"cookie", "AuthSession=initial"} in client_after.headers
   end
 
+  test "a refresh answered without a Set-Cookie keeps the existing client" do
+    counter = :counters.new(1, [])
+
+    plug = fn conn ->
+      :counters.add(counter, 1, 1)
+
+      conn =
+        if :counters.get(counter, 1) == 1 do
+          Plug.Conn.put_resp_header(conn, "set-cookie", "AuthSession=initial; Path=/")
+        else
+          # A proxy eating Set-Cookie: 200, valid body, no cookie.
+          conn
+        end
+
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.send_resp(200, Jason.encode!(%{"ok" => true}))
+    end
+
+    pid = start_server(plug)
+
+    assert {:error, %Akaw.Error{error: "no_auth_cookie"}} = Akaw.SessionServer.refresh(pid)
+
+    # The cookie-less client must not have been installed.
+    client = Akaw.SessionServer.client(pid)
+    assert {"cookie", "AuthSession=initial"} in client.headers
+  end
+
+  test "init refuses a session answer that grants no cookie" do
+    plug = fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.send_resp(200, Jason.encode!(%{"ok" => true}))
+    end
+
+    Process.flag(:trap_exit, true)
+
+    assert {:error, %Akaw.Error{error: "no_auth_cookie"}} =
+             Akaw.SessionServer.start_link(
+               name: :"akaw_session_no_cookie_#{System.unique_integer([:positive])}",
+               base_url: "http://x",
+               username: "admin",
+               password: "pw",
+               client_opts: [req_options: [plug: plug]]
+             )
+  end
+
   test "accepts :password as a 0-arity function for deferred secret lookup" do
     {plug, counter} = counting_session_plug()
 

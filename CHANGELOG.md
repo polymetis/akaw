@@ -74,6 +74,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `refresh_interval: :timer.minutes(30)` explicitly if you had raised
   CouchDB's timeout and relied on the old cadence.
 
+- **`Akaw.Session.refresh/3` treats a 200 without `Set-Cookie` as an
+  error.** Refresh strips the old cookie before re-authenticating, so
+  `create/3`'s lenient no-cookie fallback (return the client unchanged)
+  handed back a client with no credentials at all — which
+  `Akaw.SessionServer` then installed as its state while emitting success
+  telemetry. Refresh now returns
+  `{:error, %Akaw.Error{error: "no_auth_cookie"}}`; the `SessionServer`
+  keeps its previous client on that path, and refuses to start at all if
+  the initial login grants no cookie. `create/3`'s documented fallback is
+  unchanged.
+
 ### Fixed
 
 - **Responses are compressed again.** Req 0.6.1 made decompression opt-in, so

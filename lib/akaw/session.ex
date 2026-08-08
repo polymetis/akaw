@@ -34,7 +34,7 @@ defmodule Akaw.Session do
   See <https://docs.couchdb.org/en/latest/api/server/authn.html>.
   """
 
-  alias Akaw.{Client, Request}
+  alias Akaw.{Client, Error, Request}
 
   @auth_session_re ~r/AuthSession=([^;]+)/
 
@@ -48,6 +48,8 @@ defmodule Akaw.Session do
 
   If CouchDB returns 200 but doesn't include a `Set-Cookie` header (rare —
   custom proxies may strip it), the original client is returned unchanged.
+  (`refresh/3`, by contrast, treats a missing cookie as an error — its
+  caller is discarding the old session on the promise of a new one.)
   """
   @spec create(Client.t(), String.t(), String.t()) ::
           {:ok, Client.t(), map()} | {:error, term()}
@@ -102,6 +104,13 @@ defmodule Akaw.Session do
   header from `client` before re-auth so the previous AuthSession isn't
   sent alongside the credentials.
 
+  Unlike `create/3` — whose documented fallback returns the client
+  unchanged when no `Set-Cookie` comes back — a refresh that doesn't
+  produce an `AuthSession` cookie is a *failed* refresh: the old cookie
+  is already stripped, so "unchanged" here would mean a client with no
+  credentials at all. You get `{:error, %Akaw.Error{error:
+  "no_auth_cookie"}}` instead; keep using the client you already have.
+
   ## Example
 
       {:ok, authed, _} = Akaw.Session.create(client, "admin", "secret")
@@ -115,7 +124,35 @@ defmodule Akaw.Session do
           {:ok, Client.t(), map()} | {:error, term()}
   def refresh(%Client{} = client, name, password)
       when is_binary(name) and is_binary(password) do
-    create(strip_cookie(client), name, password)
+    case create(strip_cookie(client), name, password) do
+      {:ok, refreshed, body} -> ensure_auth_session(refreshed, body)
+      {:error, _} = error -> error
+    end
+  end
+
+  # create/3's lenient no-cookie fallback returns its input client — which,
+  # for refresh, is the cookie-stripped client. Handing that back as
+  # `{:ok, _}` would silently downgrade a working session to no credentials.
+  defp ensure_auth_session(%Client{} = client, body) do
+    if carries_auth_session?(client) do
+      {:ok, client, body}
+    else
+      {:error,
+       %Error{
+         status: 200,
+         error: "no_auth_cookie",
+         reason:
+           "CouchDB answered without a Set-Cookie AuthSession header " <>
+             "(an intervening proxy may be stripping it)",
+         body: body
+       }}
+    end
+  end
+
+  defp carries_auth_session?(%Client{headers: headers}) do
+    Enum.any?(headers, fn {name, value} ->
+      String.downcase(name) == "cookie" and String.contains?(value, "AuthSession=")
+    end)
   end
 
   defp strip_cookie(%Client{headers: headers} = client) do
