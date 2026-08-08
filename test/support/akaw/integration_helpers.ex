@@ -63,4 +63,28 @@ defmodule Akaw.IntegrationHelpers do
     Enum.each(["_users", "_replicator", "_global_changes"], &ensure_db(client, &1))
     :ok
   end
+
+  @doc """
+  Sync point for live-arrival `_changes` tests: writes sentinel docs until
+  the continuous feed sends one back (the consumer must `send` the calling
+  process `:feed_open` when it sees a `"sentinel" <> _` id), or gives up.
+
+  A single pre-written sentinel is NOT enough: the feed runs
+  `since: "now"`, so a sentinel written before the connection is
+  established falls outside the window and is never delivered — no
+  timeout fixes a message that is never coming. (Observed on a GitHub
+  runner.) Each attempt writes a fresh doc id so every write is a new
+  change the feed can deliver.
+  """
+  def write_sentinels_until_feed_open(client, db, attempts \\ 100) do
+    Enum.reduce_while(1..attempts, {:error, :never_opened}, fn i, _acc ->
+      {:ok, _} = Akaw.Document.put(client, db, "sentinel_#{i}", %{})
+
+      receive do
+        :feed_open -> {:halt, :ok}
+      after
+        200 -> {:cont, {:error, :never_opened}}
+      end
+    end)
+  end
 end

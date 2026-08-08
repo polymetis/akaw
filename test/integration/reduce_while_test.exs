@@ -233,20 +233,4 @@ defmodule Akaw.Integration.ReduceWhileTest do
                )
     end
   end
-
-  # Writes sentinel docs until the continuous feed sends one back, or gives
-  # up. Each doc gets a fresh id, so every write is a new change the feed
-  # can deliver — retrying a single id would need its rev and would only
-  # produce one change per revision anyway.
-  defp write_sentinels_until_feed_open(client, db, attempts \\ 100) do
-    Enum.reduce_while(1..attempts, {:error, :never_opened}, fn i, _acc ->
-      {:ok, _} = Akaw.Document.put(client, db, "sentinel_#{i}", %{})
-
-      receive do
-        :feed_open -> {:halt, :ok}
-      after
-        200 -> {:cont, {:error, :never_opened}}
-      end
-    end)
-  end
 end
