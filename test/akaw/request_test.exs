@@ -214,6 +214,27 @@ defmodule Akaw.RequestTest do
       assert_receive {:content_type, ["application/json; charset=utf-8"]}
     end
 
+    @tag :capture_log
+    test "a response slower than :receive_timeout is a transport_error carrying the timeout" do
+      # The old seam could only fabricate this class; over a real socket
+      # the genuine article is a stub that oversleeps. Pinned ahead of
+      # the transport swap: timeouts must keep surfacing through the
+      # error channel, never raise.
+      plug = fn conn ->
+        Process.sleep(500)
+        Loopback.json(conn, %{})
+      end
+
+      client = Loopback.client(plug, req_options: [retry: false])
+
+      assert {:error, %Akaw.Error{} = err} =
+               Request.request(client, :get, "/", receive_timeout: 50)
+
+      assert err.status == nil
+      assert err.error == "transport_error"
+      assert Exception.message(err.body.exception) =~ "timeout"
+    end
+
     test "transport exceptions are wrapped into %Akaw.Error{status: nil}" do
       client = Loopback.refused_client(req_options: [retry: false])
 
