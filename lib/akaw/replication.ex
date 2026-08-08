@@ -26,8 +26,8 @@ defmodule Akaw.Replication do
   >
   > A remote `source`/`target` embeds its credentials — as URL userinfo
   > or an `auth`/`headers` field — and CouchDB stores and returns them
-  > verbatim: `get/3` and `list/2` hand you documents containing live
-  > remote-cluster secrets. Treat them accordingly — don't log them,
+  > verbatim: `get/3` (and `list/2` with `include_docs: true`) hands
+  > you documents containing live remote-cluster secrets. Treat them accordingly — don't log them,
   > don't `inspect/1` them into error reports, and remember that read
   > access to `_replicator` is read access to every credential in it.
 

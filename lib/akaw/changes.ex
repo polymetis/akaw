@@ -115,9 +115,10 @@ defmodule Akaw.Changes do
   killing the consuming process.
 
   One non-change element can arrive: when CouchDB ends the feed itself
-  (the `:timeout` inactivity window closes with no heartbeat set), the
-  final line is a terminal `%{"last_seq" => ..., "pending" => ...}`
-  object, delivered like any other element. It has no `"id"`/`"seq"`
+  (e.g. the `:timeout` inactivity window closes with no heartbeat set,
+  or `:limit` is reached), the final line is a terminal
+  `%{"last_seq" => ..., "pending" => ...}` object, delivered like any
+  other element. It has no `"id"`/`"seq"`
   keys — match on `change["id"]` if your consumer must ignore it.
 
   ## Options
