@@ -92,6 +92,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Akaw is released under the **MIT license**, and carries the Hex package
+  metadata needed to publish it.
+
 - A real README, and API documentation via `ex_doc` (`mix docs`), with the
   modules grouped by CouchDB API section.
 
