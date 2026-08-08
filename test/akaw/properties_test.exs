@@ -116,18 +116,24 @@ defmodule Akaw.PropertiesTest do
 
   describe "basic auth header" do
     property "Authorization: Basic roundtrips through Base.decode64 to 'user:pass'" do
+      # One listener for the whole property: the plug is case-invariant
+      # (it only echoes the auth header), and a listener per generated
+      # case would pile up ~100 supervised acceptor trees before the
+      # test exits. Only the client varies.
+      test = self()
+
+      plug = fn conn ->
+        send(test, Plug.Conn.get_req_header(conn, "authorization"))
+        Loopback.json(conn, %{})
+      end
+
+      url = Loopback.url(plug)
+
       check all(
               user <- string(:alphanumeric, min_length: 1, max_length: 20),
               pass <- string(:printable, max_length: 30)
             ) do
-        test = self()
-
-        plug = fn conn ->
-          send(test, Plug.Conn.get_req_header(conn, "authorization"))
-          Loopback.json(conn, %{})
-        end
-
-        client = Loopback.client(plug, auth: {:basic, user, pass})
+        client = Akaw.new(base_url: url, auth: {:basic, user, pass})
 
         assert {:ok, _} = Akaw.Server.info(client)
         assert_receive [auth_header]
