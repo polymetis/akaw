@@ -87,6 +87,17 @@ defmodule Akaw.Integration.ReplicationTest do
     "#{uri.scheme}://#{user}:#{pass}@#{uri.host}:#{uri.port}/#{db}"
   end
 
+  # The real credentials must go INTO the replication document — that's
+  # how CouchDB reaches the source — but they must never come OUT in
+  # test output: CI logs are often world-readable, AKAW_TEST_PASS may be
+  # a real admin password there, and these diagnostics fire precisely on
+  # the flakes that get pasted into issues. Covers both the URL we print
+  # ourselves and any credential-bearing URL CouchDB embeds in its own
+  # error strings (its auth errors quote the session URL).
+  defp redact_credentials(text) do
+    String.replace(text, ~r{//([^/@:\s]+):[^@\s]+@}, "//\\1:[REDACTED]@")
+  end
+
   # Poll until the replicated doc shows up, giving up early if the
   # replicator reports the job unhealthy rather than merely unfinished.
   # The generous ceiling is a backstop for a stuck job, not an expected
@@ -105,18 +116,22 @@ defmodule Akaw.Integration.ReplicationTest do
         :ok
 
       unhealthy = replication_failure(client, repl_id) ->
-        flunk("""
-        replication job is not healthy, so #{doc_id} is never arriving:
-          #{inspect(unhealthy)}
-          source/target URL given to CouchDB: #{build_authed_url(client, target_db)}
-        """)
+        flunk(
+          redact_credentials("""
+          replication job is not healthy, so #{doc_id} is never arriving:
+            #{inspect(unhealthy)}
+            source/target URL given to CouchDB: #{build_authed_url(client, target_db)}
+          """)
+        )
 
       System.monotonic_time(:millisecond) > deadline ->
-        flunk("""
-        replication did not deliver #{doc_id} within #{@replication_ceiling_ms}ms.
-          scheduler: #{inspect(replication_state(client, repl_id))}
-          source/target URL given to CouchDB: #{build_authed_url(client, target_db)}
-        """)
+        flunk(
+          redact_credentials("""
+          replication did not deliver #{doc_id} within #{@replication_ceiling_ms}ms.
+            scheduler: #{inspect(replication_state(client, repl_id))}
+            source/target URL given to CouchDB: #{build_authed_url(client, target_db)}
+          """)
+        )
 
       true ->
         Process.sleep(@replication_poll_ms)
