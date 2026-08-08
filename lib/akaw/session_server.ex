@@ -212,7 +212,7 @@ defmodule Akaw.SessionServer do
        %Error{
          error: "refresh_exception",
          reason: Exception.message(exception),
-         body: %{exception: exception}
+         body: %{exception: exception, stacktrace: __STACKTRACE__}
        }}
   catch
     kind, value ->
@@ -220,7 +220,7 @@ defmodule Akaw.SessionServer do
        %Error{
          error: "refresh_exception",
          reason: "#{kind}: #{inspect(value)}",
-         body: %{exception: {kind, value}}
+         body: %{exception: {kind, value}, stacktrace: __STACKTRACE__}
        }}
   end
 
