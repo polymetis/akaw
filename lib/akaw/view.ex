@@ -92,8 +92,13 @@ defmodule Akaw.View do
   @spec stream(Client.t(), String.t(), String.t(), String.t(), keyword()) :: Enumerable.t(map())
   def stream(%Client{} = client, db, ddoc, view, opts \\ [])
       when is_binary(db) and is_binary(ddoc) and is_binary(view) do
-    Streaming.chunks(client, :get, view_path(db, ddoc, view),
-      params: Params.encode_json_keys(opts)
+    {req_opts, couchdb_opts} = Streaming.split_req_opts(opts)
+
+    Streaming.chunks(
+      client,
+      :get,
+      view_path(db, ddoc, view),
+      [params: Params.encode_json_keys(couchdb_opts)] ++ req_opts
     )
     |> JsonItemStream.items()
   end
@@ -106,9 +111,13 @@ defmodule Akaw.View do
           Enumerable.t(map())
   def stream_post_keys(%Client{} = client, db, ddoc, view, keys, opts \\ [])
       when is_binary(db) and is_binary(ddoc) and is_binary(view) and is_list(keys) do
-    Streaming.chunks(client, :post, view_path(db, ddoc, view),
-      json: %{keys: keys},
-      params: Params.encode_json_keys(opts)
+    {req_opts, couchdb_opts} = Streaming.split_req_opts(opts)
+
+    Streaming.chunks(
+      client,
+      :post,
+      view_path(db, ddoc, view),
+      [json: %{keys: keys}, params: Params.encode_json_keys(couchdb_opts)] ++ req_opts
     )
     |> JsonItemStream.items()
   end

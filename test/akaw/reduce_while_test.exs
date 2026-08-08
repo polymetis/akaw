@@ -913,6 +913,33 @@ defmodule Akaw.ReduceWhileTest do
       assert :counters.get(calls, 1) == 1
     end
 
+    test "lazy row streams route per-call transport opts too" do
+      # The same intent-inversion existed on the row streams: :retry (or
+      # :receive_timeout) passed to stream_all_docs leaked into the query
+      # string and the streaming default pinned retry off anyway.
+      plug = fn conn ->
+        Process.put(:akaw_row_stream_qs, conn.query_string)
+        pretty_plug([%{"id" => "a"}]).(conn)
+      end
+
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+
+      assert [%{"id" => "a"}] =
+               client
+               |> Akaw.Documents.stream_all_docs("db",
+                 limit: 10,
+                 retry: false,
+                 receive_timeout: 90_000
+               )
+               |> Enum.to_list()
+
+      qs = Process.get(:akaw_row_stream_qs) || ""
+      assert qs =~ "limit=10"
+      refute qs =~ "retry"
+      refute qs =~ "receive_timeout"
+    end
+
+    @tag :capture_log
     test "a per-call retry opt-in routes to the transport and is respected" do
       # The whole opt-in has to survive two hazards: :retry must be
       # routed out of the CouchDB params (or it becomes ?retry=... and
