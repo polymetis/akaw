@@ -98,7 +98,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged.
 
 - **Streaming and feed requests never retry — the opt-in is gone.**
-  A per-call `retry:` now raises `ArgumentError`, and a client-level
+  A per-call `retry:` now raises `ArgumentError` on every streaming
+  entry point and on the feed-capable endpoints in *every* feed mode
+  (`feed: "normal"` included — those endpoints take retry policy only
+  at the client level), and a client-level
   `req_options: [retry: ...]` is overridden on streaming and held-open
   paths (previously it was silently inherited — the person configuring
   the client is not necessarily the person streaming through it). The
@@ -175,9 +178,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Akaw.Server.db_updates/2`/`stream_db_updates/2`, and the
   `reduce_while` continuous wrappers (which previously only derived from
   `:heartbeat`). The non-reduce entry points also now route
-  `:receive_timeout` / `:pool_timeout` / `:connect_options` to the
-  transport instead of the query string. An explicit `:receive_timeout`
-  always wins — per call or per client `req_options`.
+  `:receive_timeout` / `:pool_timeout` to the transport instead of the
+  query string. An explicit `:receive_timeout` always wins — per call
+  or per client `req_options`.
 
   Note on `_db_updates`: CouchDB's documentation describes its
   `:timeout` in seconds, but the implementation (verified empirically
@@ -216,10 +219,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   million rows silently re-ran the reducer from row one with the
   accumulator wiped, and a node restart mid-`_changes` re-delivered
   already-processed changes. Streaming requests now pin `retry: false`;
-  `{:ok, final_acc}` means every row was delivered exactly once. An
-  explicit `:retry` (per call or per client `req_options`) is respected
-  for reducers that prefer restart-from-scratch over failing.
-  Non-streaming requests keep Req's default retry.
+  `{:ok, final_acc}` means every row was delivered exactly once. (The
+  per-call/per-client opt-in that originally shipped with this fix was
+  removed later in this same release — see "Streaming and feed requests
+  never retry" above.) Plain non-streaming requests keep Req's default
+  retry, tunable at the client level.
 
 - **A `password_fn` that raises or exits during a scheduled refresh no
   longer crash-loops `Akaw.SessionServer`.** The `:password` option is

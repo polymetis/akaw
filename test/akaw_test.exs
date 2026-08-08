@@ -106,7 +106,32 @@ defmodule AkawTest do
           ]
         )
 
+      # Every allowed key must survive validation intact — a validator
+      # refactor that silently drops allowed keys would otherwise pass.
+      assert Keyword.keys(client.req_options) |> Enum.sort() ==
+               Enum.sort([
+                 :receive_timeout,
+                 :pool_timeout,
+                 :retry,
+                 :retry_delay,
+                 :compressed,
+                 :headers,
+                 :plug
+               ])
+
       assert Keyword.get(client.req_options, :receive_timeout) == 30_000
+    end
+
+    test "req_options rejects a function-valued :retry" do
+      # Req accepts retry: fn %Req.Request{}, %Req.Response{} -> ... end
+      # — a caller programming directly against the transport types the
+      # narrowed contract exists to contain. Atoms only.
+      error =
+        assert_raise ArgumentError, fn ->
+          Akaw.new(base_url: "http://x", req_options: [retry: fn _, _ -> false end])
+        end
+
+      assert error.message =~ ":safe_transient"
     end
 
     test "hides credentials embedded in base_url" do

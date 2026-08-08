@@ -65,10 +65,11 @@ defmodule Akaw.Changes do
 
   `:receive_timeout` / `:pool_timeout` in `opts` route to the
   transport rather than the query string; an explicit
-  `:receive_timeout` always wins. Held-open feeds never retry
-  (`retry:` raises): retrying a longpoll that timed out client-side is
-  guaranteed to time out again while abandoning server-side
-  connections.
+  `:receive_timeout` always wins. The feed endpoints take no per-call
+  `retry:` — it raises for every feed mode: held-open feeds never retry
+  at all (retrying a longpoll that timed out client-side is guaranteed
+  to time out again while abandoning server-side connections), and
+  normal-feed requests take retry policy at the client level.
   """
   @spec get(Client.t(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def get(%Client{} = client, db, opts \\ []) when is_binary(db) do

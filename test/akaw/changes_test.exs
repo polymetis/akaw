@@ -80,10 +80,21 @@ defmodule Akaw.ChangesTest do
       assert :counters.get(calls, 1) == 1
     end
 
-    test "a per-call retry: on a feed request raises", %{client: client} do
-      assert_raise ArgumentError, ~r/never retry/, fn ->
+    test "a per-call retry: on a feed request raises — every feed mode", %{client: client} do
+      assert_raise ArgumentError, ~r/no per-call :retry/, fn ->
         Akaw.Changes.get(client, "mydb", feed: "longpoll", retry: false)
       end
+
+      # The default "normal" feed raises too: the feed endpoints take no
+      # per-call retry policy at all (client-level only for plain
+      # requests), and the message says so rather than misdescribing a
+      # plain request as a streaming walk.
+      error =
+        assert_raise ArgumentError, fn ->
+          Akaw.Changes.get(client, "mydb", retry: false)
+        end
+
+      assert error.message =~ "client level"
     end
 
     test "routes transport opts to the transport, not the query string", %{client: client} do

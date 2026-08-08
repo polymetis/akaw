@@ -277,22 +277,42 @@ defmodule Akaw.Streaming do
   @spec split_req_opts(keyword()) :: {keyword(), keyword()}
   def split_req_opts(opts) when is_list(opts) do
     reject_retry!(opts)
+    reject_connect_options!(opts)
     Keyword.split(opts, @req_opt_keys)
   end
 
   # Same posture as Akaw.Changes' reject_feed_override!/1: a loud,
   # immediate ArgumentError beats a silently ignored (or worse,
-  # query-param-leaked) option.
+  # query-param-leaked) option. Fires for every feed mode on the
+  # feed-capable endpoints, "normal" included — these endpoints take no
+  # per-call retry policy at all.
   defp reject_retry!(opts) do
     if Keyword.has_key?(opts, :retry) do
       raise ArgumentError,
-            "streaming and feed requests never retry — a transparent retry " <>
-              "restarts the walk from row zero with the accumulator reset and " <>
-              "every side effect re-run, which at larger-than-RAM scale is a " <>
-              "walk that may never complete. Resume from a checkpoint you own " <>
-              "instead: see \"Interrupted walks: resume, don't retry\" in the " <>
-              "reduce_while docs (startkey/startkey_docid for _all_docs and " <>
-              "views, since: for _changes)."
+            "the streaming and feed endpoints take no per-call :retry. " <>
+              "Streaming and held-open requests never retry — a transparent " <>
+              "retry restarts the walk from row zero with the accumulator " <>
+              "reset and every side effect re-run, which at larger-than-RAM " <>
+              "scale is a walk that may never complete; resume from a " <>
+              "checkpoint you own instead (see \"Interrupted walks: resume, " <>
+              "don't retry\" in the reduce_while docs). Plain normal-feed " <>
+              "requests take retry policy at the client level: " <>
+              "Akaw.new(req_options: [retry: ...])."
+    end
+  end
+
+  # :connect_options left the per-call surface in the Phase 0 contract
+  # narrowing. Same loud-beats-leaked posture: without this it would
+  # fall into the CouchDB params bucket and die inside URI encoding
+  # with an error pointing away from the cause.
+  defp reject_connect_options!(opts) do
+    if Keyword.has_key?(opts, :connect_options) do
+      raise ArgumentError,
+            "per-call :connect_options was removed — connection-level " <>
+              "options (TLS for self-signed CouchDB, proxies) are configured " <>
+              "on a named Finch pool: {Finch, name: MyApp.CouchPool, pools: " <>
+              "%{default: [conn_opts: [transport_opts: [...]]]}} and " <>
+              "Akaw.new(base_url: url, finch: MyApp.CouchPool)."
     end
   end
 

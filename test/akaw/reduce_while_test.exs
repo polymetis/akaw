@@ -41,9 +41,9 @@ defmodule Akaw.ReduceWhileTest do
     end
   end
 
-  # No `retry: false` here — streaming paths default retry off themselves
-  # (see "Retry: off by default" in Akaw.Streaming). This helper carrying
-  # no opt-out is part of the proof.
+  # No `retry: false` here — streaming paths pin retry off themselves,
+  # unconditionally (see "Retry: off, unconditionally" in Akaw.Streaming).
+  # This helper carrying no opt-out is part of the proof.
   defp client_with(plug) do
     Akaw.new(base_url: "http://x", req_options: [plug: plug])
   end
@@ -885,7 +885,8 @@ defmodule Akaw.ReduceWhileTest do
     # after a transient failure — which, on a streaming path, resets the
     # private accumulator and feeds every row to the reducer a second
     # time. {:ok, final_acc} must mean "each row delivered once", so the
-    # streaming paths pin retry: false unless someone explicitly opts in.
+    # streaming paths pin retry: false unconditionally — there is no
+    # opt-in at any layer (per-call raises; client-level is overridden).
     defp flaky_once_plug(calls) do
       rows_plug = pretty_plug([%{"id" => "a"}])
 
@@ -943,7 +944,7 @@ defmodule Akaw.ReduceWhileTest do
       # ignoring the option would be worse than honoring it; raise loudly.
       client = Akaw.new(base_url: "http://x", req_options: [plug: pretty_plug([])])
 
-      assert_raise ArgumentError, ~r/never retry|resume/, fn ->
+      assert_raise ArgumentError, ~r/never retry(.|\n)*resume/, fn ->
         Akaw.Documents.reduce_while_all_docs(
           client,
           "db",
@@ -1004,6 +1005,29 @@ defmodule Akaw.ReduceWhileTest do
         end
 
       assert error.error == "stream_transport_error"
+    end
+
+    test "the lazy chunks path overrides a client-level retry opt-in too" do
+      # pin_retry_off has three call sites; open/4 behind the lazy
+      # streams is the one a green suite could silently lose — this
+      # fails if it does.
+      calls = :counters.new(1, [])
+
+      client =
+        Akaw.new(
+          base_url: "http://x",
+          req_options: [
+            plug: flaky_once_plug(calls),
+            retry: :safe_transient,
+            retry_delay: fn _ -> 0 end
+          ]
+        )
+
+      assert_raise Akaw.Error, ~r/503/, fn ->
+        client |> Akaw.Documents.stream_all_docs("db") |> Enum.to_list()
+      end
+
+      assert :counters.get(calls, 1) == 1
     end
 
     test "the lazy chunks path is not retried either" do

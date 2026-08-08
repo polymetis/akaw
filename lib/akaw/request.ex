@@ -89,9 +89,10 @@ defmodule Akaw.Request do
   # per-request cost for anyone using a named pool.
   #
   # akaw keeps its friendly flat public API (`Akaw.new(finch: MyApp.Finch)`,
-  # `pool_timeout: 5_000`) and translates here instead. This runs last, after
-  # the req_options and per-call merges, so it also catches a `:finch` a
-  # caller set directly through `:req_options`.
+  # `pool_timeout: 5_000`) and translates here instead. It runs last,
+  # after the req_options and per-call merges, so the folded result is
+  # what actually reaches Req. (`req_options: [finch: ...]` itself now
+  # raises at Akaw.new/1 — the allowlist closed that spelling.)
   #
   # `:receive_timeout` is NOT deprecated and stays flat — don't
   # "helpfully" fold it in too.
@@ -185,9 +186,10 @@ defmodule Akaw.Request do
     end
   end
 
-  # The one place a transport response crosses into the rest of the
-  # library: everything outside this module sees %Akaw.Response{}, so a
-  # transport change stays contained here.
+  # The one place a transport response crosses to the ENDPOINT modules:
+  # every `return: :response` consumer sees %Akaw.Response{}. (The other
+  # crossing is request_raw/4, whose %Req.Response{} feeds only
+  # Akaw.Streaming — the module the transport swap rewrites wholesale.)
   defp to_akaw_response(%Req.Response{status: status, headers: headers, body: body}) do
     flat = for {name, values} <- headers, value <- values, do: {name, value}
     %Response{status: status, headers: flat, body: body}

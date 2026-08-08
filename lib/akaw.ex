@@ -179,8 +179,9 @@ defmodule Akaw do
 
     * `:req_options` — a *narrow, named* set of client-level options merged
       into every request; per-call options override these. Allowed keys:
-      `:receive_timeout`, `:pool_timeout`, `:retry`, `:retry_delay`
-      (plain requests only — streaming and feed paths never retry),
+      `:receive_timeout`, `:pool_timeout`, `:retry` (atoms only —
+      `false`, `:safe_transient`, or `:transient`; plain requests only,
+      streaming and feed paths never retry), `:retry_delay`,
       `:compressed`, `:headers`, and `:plug` (test stubbing). Anything
       else raises `ArgumentError` — this is deliberately not an
       arbitrary passthrough to the underlying HTTP client, so the
@@ -246,6 +247,8 @@ defmodule Akaw do
   ]
 
   defp validate_req_options!(req_options) when is_list(req_options) do
+    validate_retry_value!(Keyword.get(req_options, :retry))
+
     case Keyword.keys(req_options) -- @allowed_req_options do
       [] ->
         req_options
@@ -283,6 +286,22 @@ defmodule Akaw do
   # output stops leaking it, and the behaviour is the same whichever Req
   # version is underneath. An explicit `:auth` option still wins, matching
   # Req's own precedence.
+  # The :retry KEY is allowed; its value domain is contract too. Req
+  # also accepts a 2-arity function called with %Req.Request{} and
+  # %Req.Response{} — which would program the caller directly against
+  # the transport types this contract exists to contain. Atoms only.
+  defp validate_retry_value!(value) when value in [nil, false, :safe_transient, :transient] do
+    :ok
+  end
+
+  defp validate_retry_value!(other) do
+    raise ArgumentError,
+          "req_options[:retry] takes false, :safe_transient, or :transient — " <>
+            "got #{inspect(other)}. Function-valued retry policies program " <>
+            "against the underlying HTTP client's request/response types, " <>
+            "which the client contract deliberately does not expose."
+  end
+
   defp split_userinfo(base_url) do
     case URI.parse(base_url) do
       %URI{userinfo: nil} ->

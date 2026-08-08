@@ -65,12 +65,13 @@ end
 defmodule Akaw.Integration.ServerFinchPoolTest do
   # async: false — deliberately, and it's the load-bearing part of these
   # tests. They capture :stderr, and ExUnit shares named-device capture
-  # content among ALL concurrently capturing tests — while
-  # request_test.exs's ":pool_timeout stays flat alongside
-  # :connect_options" test *deliberately emits* the exact "deprecated"
-  # warning refuted here. Under async the warning bled across into this
-  # capture (observed at seed 784254). Sync tests run serially after the
-  # whole async phase, so nothing can interleave with the capture.
+  # content among ALL concurrently capturing tests, so anything any
+  # async test writes to stderr can bleed into this capture (observed
+  # live at seed 784254, back when a request_test case deliberately
+  # emitted the exact "deprecated" warning refuted here; that emitter
+  # died with the Req corner it pinned, but the shared-capture hazard
+  # is structural). Sync tests run serially after the whole async
+  # phase, so nothing can interleave with the capture.
   use ExUnit.Case, async: false
 
   @moduletag :integration
