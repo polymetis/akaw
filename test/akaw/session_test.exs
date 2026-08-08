@@ -202,7 +202,7 @@ defmodule Akaw.SessionTest do
           req_options: [plug: reply]
         )
 
-      assert {:error, %Akaw.Error{status: 200, error: "no_auth_cookie"}} =
+      assert {:error, %Akaw.Error{status: nil, error: "no_auth_cookie"}} =
                Akaw.Session.refresh(authed, "admin", "pw")
     end
 

@@ -99,8 +99,9 @@ defmodule Akaw.Session do
   @doc """
   Re-authenticate and return a client carrying a fresh `AuthSession` cookie.
 
-  Functionally equivalent to `create/3` but named for intent — call this
-  to keep a long-lived client from expiring. Strips any existing cookie
+  Posts the same `/_session` request as `create/3`, but named for intent
+  and stricter about the result — call this to keep a long-lived client
+  from expiring. Strips any existing cookie
   header from `client` before re-auth so the previous AuthSession isn't
   sent alongside the credentials.
 
@@ -139,7 +140,9 @@ defmodule Akaw.Session do
     else
       {:error,
        %Error{
-         status: 200,
+         # No status: create/3 hands us the decoded body, not the
+         # response, and 2xx is all we know — don't fabricate a code.
+         status: nil,
          error: "no_auth_cookie",
          reason:
            "CouchDB answered without a Set-Cookie AuthSession header " <>

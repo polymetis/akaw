@@ -126,7 +126,8 @@ defmodule Akaw do
       HTTP non-2xx fills `:status`, `:error`, `:reason`, `:body` from
       CouchDB. Transport failures (timeouts, DNS, refused) set
       `status: nil`, `error: "transport_error"`, and stash the underlying
-      Mint/Finch exception in `body.exception` for the curious.
+      Mint/Finch exception in `body.exception` for the curious. See
+      `Akaw.Error` for the full inventory of shapes.
   """
 
   alias Akaw.Client
