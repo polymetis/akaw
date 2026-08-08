@@ -49,6 +49,22 @@ defmodule Akaw.SessionServerTest do
     pid
   end
 
+  test "default refresh_interval stays under CouchDB's default cookie lifetime" do
+    # CouchDB's [chttpd_auth] timeout defaults to 600s: the AuthSession
+    # cookie hard-expires 10 minutes after issuance, and Akaw never picks
+    # up rotated cookies mid-flight (Akaw.Session's moduledoc: refresh is
+    # explicit) — so this timer is the only thing keeping the held cookie
+    # alive. If the default interval ever creeps past the lifetime, a
+    # server on all-default config serves a dead cookie from cookie expiry
+    # until the next refresh, every cycle.
+    couch_default_cookie_lifetime = :timer.minutes(10)
+
+    {plug, _} = counting_session_plug()
+    pid = start_server(plug)
+
+    assert :sys.get_state(pid).interval < couch_default_cookie_lifetime
+  end
+
   test "init authenticates and exposes the authed client" do
     {plug, counter} = counting_session_plug()
     pid = start_server(plug)

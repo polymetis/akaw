@@ -66,6 +66,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   1.20, and the full suite — including the integration tests against a real
   CouchDB — passes on both the old and the new toolchain.
 
+- **`Akaw.SessionServer`'s default `:refresh_interval` is now 5 minutes**
+  (was 30). CouchDB's `AuthSession` cookie expires 10 minutes after issuance
+  by default (`[chttpd_auth] timeout`), and the server holds one cookie
+  between refreshes — with a 30-minute cadence the held cookie was dead for
+  20 of every 30 minutes on an all-default setup. Pass
+  `refresh_interval: :timer.minutes(30)` explicitly if you had raised
+  CouchDB's timeout and relied on the old cadence.
+
 ### Fixed
 
 - **Responses are compressed again.** Req 0.6.1 made decompression opt-in, so

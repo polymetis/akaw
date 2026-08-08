@@ -13,8 +13,7 @@ defmodule Akaw.SessionServer do
           name: MyApp.Couch,
           base_url: "http://localhost:5984",
           username: "admin",
-          password: System.fetch_env!("COUCHDB_PASSWORD"),
-          refresh_interval: :timer.minutes(5)}
+          password: System.fetch_env!("COUCHDB_PASSWORD")}
       ]
 
       Supervisor.start_link(children, strategy: :one_for_one)
@@ -36,8 +35,12 @@ defmodule Akaw.SessionServer do
       function if you want to defer the secret lookup (Vault, K8s
       secret reloader, etc.) to refresh time rather than start time.
     * `:refresh_interval` — milliseconds between refresh attempts
-      (default 30 minutes, well within CouchDB's default 10-minute
-      `[chttpd_auth] timeout` × auto-renewal window).
+      (default 5 minutes). Keep this comfortably under CouchDB's
+      `[chttpd_auth] timeout` (default 10 minutes): the `AuthSession`
+      cookie hard-expires that long after issuance, and since Akaw
+      doesn't capture rotated cookies from intervening responses
+      (see `Akaw.Session`), this timer is the only thing keeping the
+      held cookie alive.
     * `:client_opts` — extra opts forwarded to `Akaw.new/1`
       (e.g. `req_options: [retry: :transient]`, `finch: MyApp.Finch`).
 
@@ -48,6 +51,11 @@ defmodule Akaw.SessionServer do
   initial login, the existing client stays in place and we retry on a
   short backoff (60s or the configured interval, whichever is smaller).
   Callers continue to see the most recent good client.
+
+  One caveat for laptops and suspendable VMs: the refresh timer counts
+  monotonic time, which stands still while the host sleeps. After a
+  suspend longer than the cookie lifetime, the server serves an expired
+  cookie until the next scheduled refresh fires.
 
   ## Telemetry
 
@@ -70,7 +78,7 @@ defmodule Akaw.SessionServer do
 
   alias Akaw.Session
 
-  @default_interval :timer.minutes(30)
+  @default_interval :timer.minutes(5)
   @retry_backoff :timer.seconds(60)
 
   @doc "Start a SessionServer under a supervisor. See moduledoc for options."
