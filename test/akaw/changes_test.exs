@@ -124,10 +124,11 @@ defmodule Akaw.ChangesTest do
   describe "stream/3 — feed forcing" do
     # We capture the query string into the process dictionary rather than
     # sending it as a message — `next_chunk`'s `receive` eagerly drains the
-    # mailbox and would swallow a regular `send`. End-to-end streaming
-    # (multiple chunks, line splitting across them) is exercised against a
-    # real CouchDB in tests tagged `:integration` because Req.Test's plug
-    # transport buffers the body rather than chunking it.
+    # mailbox and would swallow a regular `send`.
+    #
+    # (Req 0.7's plug adapter does deliver individual chunks, so plug-based
+    # chunk-boundary tests are possible now; see reduce_while_test.exs. The
+    # mailbox caveat above is unrelated and still applies.)
     test "forces feed=continuous and forwards other opts" do
       plug = fn conn ->
         Process.put(:akaw_changes_qs, conn.query_string)

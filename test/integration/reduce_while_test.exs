@@ -2,10 +2,12 @@ defmodule Akaw.Integration.ReduceWhileTest do
   use ExUnit.Case, async: true
 
   # Integration tests for the synchronous `reduce_while` callback API.
-  # Unlike the unit tests in test/akaw/reduce_while_test.exs (which use
-  # Req's :plug adapter that buffers the body into one chunk), these run
-  # against a real CouchDB so chunk-boundary behavior, line splitting,
-  # and the JSON-item state machine are all exercised end-to-end.
+  # The unit tests in test/akaw/reduce_while_test.exs cover chunk boundaries
+  # through Req's :plug adapter, which since Req 0.7 delivers each
+  # `Plug.Conn.chunk/2` separately. These run the same paths against a real
+  # CouchDB, so socket-level framing, line splitting, and the JSON-item
+  # state machine are exercised against a server that decides its own chunk
+  # boundaries rather than a plug that hands us the ones we asked for.
 
   @moduletag :integration
 
