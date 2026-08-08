@@ -173,10 +173,18 @@ defmodule Akaw.Integration.ReduceWhileTest do
   describe "Akaw.Changes.reduce_while/5" do
     # Live-arrival test: we want to prove the callback API sees changes
     # written *after* the connection opens, not just pre-existing ones.
-    # That needs a sync point. Previously this used Process.sleep(300)
-    # which races on slow CI; now the reducer sends a message back to
-    # the test once it observes a sentinel doc, and we only write the
-    # real test docs after that.
+    # That needs a sync point, and getting it right took three goes.
+    #
+    # `Process.sleep(300)` raced on slow CI. Replacing it with a single
+    # sentinel doc plus `assert_receive` looked airtight but still raced,
+    # just more subtly: the feed runs `since: "now"`, so a sentinel written
+    # before the connection is established falls *outside* the window and is
+    # never delivered at all. No timeout is long enough to fix that — the
+    # message is not late, it is never coming. (Observed on a GitHub runner.)
+    #
+    # So: keep writing sentinels until the feed reports one back. The first
+    # one that lands after the connection opens ends the loop, and the
+    # reducer ignores sentinels when accumulating.
     test "picks up changes that arrive after the connection opens",
          %{client: client, db: db} do
       test = self()
@@ -189,7 +197,7 @@ defmodule Akaw.Integration.ReduceWhileTest do
             [],
             fn change, acc ->
               case change["id"] do
-                "sentinel" ->
+                "sentinel" <> _ ->
                   send(test, :feed_open)
                   {:cont, acc}
 
@@ -203,10 +211,10 @@ defmodule Akaw.Integration.ReduceWhileTest do
           )
         end)
 
-      # Sentinel proves the feed is established and receiving;
-      # writing live1/live2 only after we see it.
-      {:ok, _} = Akaw.Document.put(client, db, "sentinel", %{})
-      assert_receive :feed_open, 5_000
+      # Sentinels prove the feed is established and receiving; we write
+      # live1/live2 only after one comes back.
+      assert :ok = write_sentinels_until_feed_open(client, db),
+             "continuous feed never reported a sentinel"
 
       {:ok, _} = Akaw.Document.put(client, db, "live1", %{n: 1})
       {:ok, _} = Akaw.Document.put(client, db, "live2", %{n: 2})
@@ -224,5 +232,21 @@ defmodule Akaw.Integration.ReduceWhileTest do
                  fn _, n -> {:cont, n + 1} end
                )
     end
+  end
+
+  # Writes sentinel docs until the continuous feed sends one back, or gives
+  # up. Each doc gets a fresh id, so every write is a new change the feed
+  # can deliver — retrying a single id would need its rev and would only
+  # produce one change per revision anyway.
+  defp write_sentinels_until_feed_open(client, db, attempts \\ 100) do
+    Enum.reduce_while(1..attempts, {:error, :never_opened}, fn i, _acc ->
+      {:ok, _} = Akaw.Document.put(client, db, "sentinel_#{i}", %{})
+
+      receive do
+        :feed_open -> {:halt, :ok}
+      after
+        200 -> {:cont, {:error, :never_opened}}
+      end
+    end)
   end
 end
