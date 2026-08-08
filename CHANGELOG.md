@@ -50,6 +50,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   raw bytes for those, which is what its documentation always said it did.
   JSON attachments are still decoded.
 
+- **All transport failures on streaming calls now carry
+  `error: "stream_transport_error"`.** The tag used to depend on which
+  phase and flavor failed: a connect failure opening a lazy `stream/N`,
+  or any transport failure on a `reduce_while` call, was tagged plain
+  `"transport_error"`, while a mid-stream failure on the lazy path said
+  `"stream_transport_error"` — the same physical event reading
+  differently across API flavors. Now it's one tag per API mode:
+  streaming calls always say `"stream_transport_error"`, non-streaming
+  calls say `"transport_error"` (or `"decode_error"`, above). If you
+  matched `"transport_error"` from `reduce_while` results, update the
+  pattern.
+
 - **Streaming transport failures report a stable `:reason`.**
   `%Akaw.Error{error: "stream_transport_error"}` previously carried an
   `inspect/1` dump of the underlying exception struct in `:reason`, which

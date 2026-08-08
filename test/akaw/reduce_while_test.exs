@@ -879,6 +879,34 @@ defmodule Akaw.ReduceWhileTest do
       assert :counters.get(calls, 1) == 2
     end
 
+    test "reduce paths tag transport failures stream_transport_error" do
+      # One tag per API mode: every transport failure on a streaming
+      # call — open or mid-stream, reduce or lazy — reads the same.
+      # Previously this path said "transport_error" while the identical
+      # failure on the lazy path said "stream_transport_error".
+      plug = fn conn -> Req.Test.transport_error(conn, :econnrefused) end
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+
+      assert {:error, %Akaw.Error{status: nil, error: "stream_transport_error"} = error} =
+               Akaw.Documents.reduce_while_all_docs(client, "db", [], fn row, acc ->
+                 {:cont, [row | acc]}
+               end)
+
+      assert is_struct(error.body.exception)
+    end
+
+    test "the lazy chunks path raises stream_transport_error on open failure" do
+      plug = fn conn -> Req.Test.transport_error(conn, :econnrefused) end
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+
+      error =
+        assert_raise Akaw.Error, fn ->
+          client |> Akaw.Changes.stream("db") |> Enum.take(1)
+        end
+
+      assert error.error == "stream_transport_error"
+    end
+
     test "the lazy chunks path is not retried either" do
       calls = :counters.new(1, [])
       client = Akaw.new(base_url: "http://x", req_options: [plug: flaky_once_plug(calls)])

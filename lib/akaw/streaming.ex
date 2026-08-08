@@ -53,11 +53,14 @@ defmodule Akaw.Streaming do
   #
   # ## chunks/4 — open errors
   #
-  # The `start_fun` raises:
+  # The `start_fun` raises `Akaw.Error` in both cases:
   #
-  #   * `Akaw.Error` for HTTP non-2xx responses (the async body is drained
-  #     once and decoded to extract CouchDB's `error` / `reason`).
-  #   * The underlying transport exception for network failures.
+  #   * HTTP non-2xx — the async body is drained once and decoded to
+  #     extract CouchDB's `error` / `reason` into the struct.
+  #   * Transport failure — `error: "stream_transport_error"` with the
+  #     underlying exception in `body.exception`, the same shape as a
+  #     mid-stream failure. One tag per API mode: every transport
+  #     failure on a streaming call, whatever its phase, reads the same.
   #
   # ## reduce_*_while — idle timeout
   #
@@ -114,7 +117,7 @@ defmodule Akaw.Streaming do
         raise build_open_error(resp, status)
 
       {:error, exception} ->
-        raise Error.wrap_transport(exception)
+        raise stream_transport_error(exception)
     end
   end
 
@@ -472,7 +475,7 @@ defmodule Akaw.Streaming do
 
     case Request.request_raw(client, method, path, opts) do
       {:ok, %Req.Response{} = resp} -> {:ok, resp}
-      {:error, exception} -> {:error, Error.wrap_transport(exception)}
+      {:error, exception} -> {:error, stream_transport_error(exception)}
     end
   end
 

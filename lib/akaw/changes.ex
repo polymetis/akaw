@@ -124,10 +124,11 @@ defmodule Akaw.Changes do
 
   ## Errors
 
-  Errors raise during enumeration:
+  Errors raise during enumeration, always as `Akaw.Error`:
 
-    * `Akaw.Error` for HTTP non-2xx responses (e.g. 404 missing db)
-    * Mint/Finch transport exceptions on network failure
+    * HTTP non-2xx (e.g. 404 missing db) — CouchDB's status and error body
+    * transport failures — `error: "stream_transport_error"`, with the
+      underlying Mint/Finch exception in `body.exception`
 
   > #### Backpressure & mailbox ownership {: .warning}
   >
