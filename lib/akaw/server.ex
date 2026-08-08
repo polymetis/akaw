@@ -112,8 +112,8 @@ defmodule Akaw.Server do
 
   Held-open feeds get the transport's `:receive_timeout` defaulted to
   cover the server's quiet window, exactly as `Akaw.Changes.get/3`
-  documents; `:receive_timeout` / `:pool_timeout` / `:connect_options`
-  route to the transport rather than the query string.
+  documents; `:receive_timeout` / `:pool_timeout` / `:connect_options` /
+  `:retry` route to the transport rather than the query string.
 
   > #### Streaming feeds {: .warning}
   >
@@ -163,7 +163,9 @@ defmodule Akaw.Server do
   feed's `:timeout` (milliseconds, server default 60s) plus slack. An
   explicit `:receive_timeout` (per call or per client) always wins.
 
-  Returns `{:ok, final_acc}` or `{:error, %Akaw.Error{}}`.
+  Returns `{:ok, final_acc}` or `{:error, %Akaw.Error{}}`. A feed line
+  that fails to decode raises `%Akaw.Error{error: "stream_decode_error"}`
+  out of the reducer loop.
   """
   @spec reduce_while_db_updates(
           Client.t(),

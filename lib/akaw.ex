@@ -110,15 +110,17 @@ defmodule Akaw do
       {:error, %Akaw.Error{}}`.
 
       *Per-call transport escape hatches.* The flat `opts` keyword can
-      include any of these Finch/Mint options inline — Req forwards them
-      to its Finch adapter — in addition to CouchDB query params:
+      include any of these transport-level options inline, in addition
+      to CouchDB query params:
 
         * `:receive_timeout` — Finch's between-chunk timeout in ms
         * `:pool_timeout` — Finch wait time to acquire a pool worker
         * `:connect_options` — TCP/TLS options Finch forwards to Mint
+        * `:retry` — Req's retry policy; streaming paths default it
+          off (see the retry note below)
 
       Anything else flows through to the endpoint as a query param.
-      For held-open feeds (longpoll/continuous), `:receive_timeout`
+      For held-open feeds (longpoll/continuous/eventsource), `:receive_timeout`
       auto-defaults to cover CouchDB's legitimate quiet window —
       `heartbeat * 2` for an integer `:heartbeat`, 120s for a
       server-picked one, otherwise the feed's `:timeout` (server

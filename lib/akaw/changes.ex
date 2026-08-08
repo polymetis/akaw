@@ -62,9 +62,9 @@ defmodule Akaw.Changes do
   an integer `:heartbeat`, 120s for a server-picked one
   (`heartbeat: true`), otherwise `:timeout` plus slack.
 
-  `:receive_timeout` / `:pool_timeout` / `:connect_options` in `opts`
-  route to the transport rather than the query string; an explicit
-  `:receive_timeout` always wins.
+  `:receive_timeout` / `:pool_timeout` / `:connect_options` / `:retry`
+  in `opts` route to the transport rather than the query string; an
+  explicit `:receive_timeout` always wins.
   """
   @spec get(Client.t(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def get(%Client{} = client, db, opts \\ []) when is_binary(db) do
@@ -185,6 +185,9 @@ defmodule Akaw.Changes do
   `reducer` is called with each decoded change object. Return
   `{:cont, acc}` to keep reading or `{:halt, acc}` to close the
   connection. Returns `{:ok, final_acc}` or `{:error, %Akaw.Error{}}`.
+  One exception to the return-tuple contract: a feed line that fails to
+  decode raises `%Akaw.Error{error: "stream_decode_error"}` out of the
+  reducer loop, same as the lazy `stream/3`.
 
   ## Idle timeout
 

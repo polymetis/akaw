@@ -66,7 +66,7 @@ defmodule Akaw.Streaming do
   #
   # No mailbox `receive` here; the between-chunk timeout is Finch's
   # `:receive_timeout`. The continuous-feed wrappers default it via
-  # `default_receive_timeout/2` to cover CouchDB's legitimate quiet
+  # `default_receive_timeout/3` to cover CouchDB's legitimate quiet
   # window; pass `receive_timeout:` in opts to override.
   #
   # ## reduce_*_while — error body
@@ -251,9 +251,11 @@ defmodule Akaw.Streaming do
   @req_opt_keys [:receive_timeout, :pool_timeout, :connect_options, :retry]
 
   @doc """
-  Split a `reduce_while` opts keyword into `{req_opts, couchdb_opts}`,
-  pulling out the small set of transport-level options we let callers
-  override per call (everything else is destined for query params).
+  Split a flat opts keyword into `{req_opts, couchdb_opts}`, pulling out
+  the small set of transport-level options we let callers override per
+  call (everything else is destined for query params). Shared by every
+  streaming entry point — reduce wrappers, lazy streams, and the
+  feed-mode endpoints via `held_open_feed_opts/2`.
 
   `:receive_timeout`, `:connect_options`, and `:retry` ride to Req
   through its option passthrough. `:pool_timeout` is folded into
