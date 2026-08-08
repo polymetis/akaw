@@ -111,6 +111,24 @@ defmodule Akaw.DocumentTest do
     assert_receive %{query_string: "rev=1-a"}
   end
 
+  test "copy/5 percent-encodes the destination id in the header", %{client: client} do
+    # CouchDB splits the Destination header on a bare `?` to find the
+    # rev, so an unencoded `faq?v2` is parsed as id "faq" + rev "v2"
+    # and errors. CouchDB decodes the header (verified against 3.5), so
+    # the destination gets the same encoding as a source id in the path.
+    assert {:ok, _} = Akaw.Document.copy(client, "mydb", "doc1", "faq?v2")
+    assert_receive %{headers: headers}
+    assert {"destination", "faq%3Fv2"} in headers
+  end
+
+  test "copy/5 keeps the ?rev= separator literal while encoding the id", %{client: client} do
+    assert {:ok, _} =
+             Akaw.Document.copy(client, "mydb", "doc1", "faq?v2", destination_rev: "1-x")
+
+    assert_receive %{headers: headers}
+    assert {"destination", "faq%3Fv2?rev=1-x"} in headers
+  end
+
   describe "doc id encoding" do
     test "URL-encodes a slash in a regular doc id", %{client: client} do
       assert {:ok, _} = Akaw.Document.get(client, "mydb", "with/slash")

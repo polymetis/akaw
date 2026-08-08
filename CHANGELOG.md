@@ -111,6 +111,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   four now encode the raw value; `open_revs: "all"` still passes
   through bare, since CouchDB rejects a JSON-quoted `"all"`.
 
+- **`Akaw.Document.copy/5` percent-encodes the destination id in the
+  `Destination` header.** CouchDB splits that header on a bare `?` to
+  find an overwrite rev, so `copy(client, db, "src", "faq?v2")` was
+  parsed as id `"faq"` + rev `"v2"` and errored — while the same string
+  worked fine as a *source* id, which does get encoded into the path.
+  CouchDB decodes the header (verified against 3.5: `faq%3Fv2` creates
+  the doc id `faq?v2`, and the `?rev=` overwrite form composes with an
+  encoded id), so the destination now gets the same `Path.encode_id/1`
+  treatment as the source.
+
 - **Quiet longpoll and continuous feeds no longer die at the transport's
   15-second receive timeout.** CouchDB legitimately holds a quiet feed
   open until `:timeout` (server default 60s) — or indefinitely with a
