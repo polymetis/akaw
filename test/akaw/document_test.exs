@@ -56,6 +56,17 @@ defmodule Akaw.DocumentTest do
     assert_receive %{method: "DELETE", path: "/mydb/doc1", query_string: "rev=2-bcd"}
   end
 
+  test "delete/5 positional rev beats a stray :rev in opts", %{client: client} do
+    # Req 0.7 dedupes params by key keeping the last, so appending opts after
+    # [rev: rev] would let the stray one win and turn a valid delete into a
+    # 409. Exactly one rev goes on the wire, and it is the argument's.
+    assert {:ok, _} =
+             Akaw.Document.delete(client, "mydb", "doc1", "2-bcd", rev: "1-stale")
+
+    assert_receive %{method: "DELETE", query_string: qs}
+    assert qs == "rev=2-bcd"
+  end
+
   test "copy/5 → COPY /{db}/{id} with Destination header", %{client: client} do
     assert {:ok, _} = Akaw.Document.copy(client, "mydb", "doc1", "doc2")
     assert_receive %{method: "COPY", path: "/mydb/doc1", headers: headers}

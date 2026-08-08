@@ -122,6 +122,16 @@ defmodule Akaw.AttachmentTest do
 
       assert_receive %{method: "DELETE", path: "/mydb/doc1/thumb.png", query_string: "rev=2-y"}
     end
+
+    test "positional rev beats a stray :rev in opts" do
+      client = recording_client(fn conn -> Req.Test.json(conn, %{"ok" => true}) end)
+
+      assert {:ok, _} =
+               Akaw.Attachment.delete(client, "mydb", "doc1", "thumb.png", "2-y", rev: "1-stale")
+
+      assert_receive %{method: "DELETE", query_string: qs}
+      assert qs == "rev=2-y"
+    end
   end
 
   test "preserves _design/ in the path" do
