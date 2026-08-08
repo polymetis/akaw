@@ -28,7 +28,8 @@ defmodule Akaw.DesignDoc.Lists do
   ## Options
 
     * `:method` — `:get` (default) or `:post`
-    * `:body` — request body (only meaningful for `:post`)
+    * `:body` — request body (only meaningful for `:post`; passing one with
+      `method: :get` raises `ArgumentError`)
     * `:params` — query-string parameters; JSON-typed keys (`startkey`,
       `endkey`, `key`) are auto-encoded
   """

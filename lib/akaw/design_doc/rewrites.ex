@@ -28,8 +28,13 @@ defmodule Akaw.DesignDoc.Rewrites do
 
     * `:method` — `:get` (default), or anything else accepted by
       `Akaw.Request`
-    * `:body` — request body (sent as JSON if given)
-    * `:params` — query-string parameters forwarded verbatim
+    * `:body` — request body, sent as JSON. Requires a method that carries
+      one: passing a body with `method: :get` raises `ArgumentError`, since
+      a rewrite rule pinned to `"method": "GET"` would stop matching. Use
+      `method: :post`, or the string `method: "GET"` to send a GET that
+      carries a body verbatim.
+    * `:params` — query-string parameters. These **override** same-named
+      params already present in `path` rather than appending to them.
   """
   @spec call(Client.t(), String.t(), String.t(), String.t(), keyword()) ::
           {:ok, term()} | {:error, term()}

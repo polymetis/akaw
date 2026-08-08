@@ -333,7 +333,13 @@ defmodule Akaw.ReduceWhileTest do
 
       plug = fn conn ->
         {:ok, body, _} = Plug.Conn.read_body(conn)
-        send(test, %{method: conn.method, path: conn.request_path, qs: conn.query_string, body: body})
+
+        send(test, %{
+          method: conn.method,
+          path: conn.request_path,
+          qs: conn.query_string,
+          body: body
+        })
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")

@@ -48,4 +48,11 @@ defmodule Akaw.DesignDoc.UpdatesTest do
 
     assert_receive %{path: "/db/_design/d/_update/f/_design/target"}
   end
+
+  test "call/5 refuses method: :get, which always carries a body", %{client: client} do
+    # `:body` defaults to %{} here, so :get is always the ambiguous case.
+    assert_raise ArgumentError, ~r/cannot send a request body with `method: :get`/, fn ->
+      Akaw.DesignDoc.Updates.call(client, "db", "d", "f", method: :get)
+    end
+  end
 end

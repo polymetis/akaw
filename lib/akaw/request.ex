@@ -67,7 +67,46 @@ defmodule Akaw.Request do
     |> apply_finch(client.finch)
     |> Keyword.merge(req_options)
     |> Keyword.merge(opts)
+    |> check_body_method!()
     |> Req.new()
+  end
+
+  # Req option keys that end up setting `%Req.Request{}.body`.
+  @body_opts [:json, :body, :form, :form_multipart]
+
+  # Req 0.7's `encode_body` step silently rewrites a GET carrying a body
+  # into a POST. For a CouchDB client that is never the right answer: a
+  # `_rewrite` rule pinned to `"method": "GET"` stops matching and 404s,
+  # and a `_show`/`_list` function branching on `req.method` quietly
+  # takes the other branch without erroring at all.
+  #
+  # So akaw decides its own verb rather than inheriting Req's. Every
+  # akaw-internal body-bearing call already pins an explicit `:post` or
+  # `:put`; the only way to reach this is a caller passing `method: :get`
+  # to `DesignDoc.Shows/Lists/Rewrites/Updates`, which the first three
+  # already document as "only meaningful for `:post`".
+  defp check_body_method!(opts) do
+    if Keyword.get(opts, :method) == :get do
+      case Enum.find(@body_opts, &(Keyword.get(opts, &1) != nil)) do
+        nil -> opts
+        key -> raise ArgumentError, body_method_message(key)
+      end
+    else
+      opts
+    end
+  end
+
+  defp body_method_message(key) do
+    """
+    cannot send a request body with `method: :get` — Req would silently \
+    rewrite the request to POST, changing which CouchDB handler runs.
+
+    Got `#{inspect(key)}` alongside `method: :get`.
+
+    Either pass `method: :post` (what the `:body` option is documented for), \
+    or pass the method as a string — `method: "GET"` — if you really do want \
+    a GET that carries a body, which CouchDB accepts and akaw sends verbatim.\
+    """
   end
 
   defp combine_headers(lists) do

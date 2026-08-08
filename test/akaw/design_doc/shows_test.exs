@@ -52,4 +52,12 @@ defmodule Akaw.DesignDoc.ShowsTest do
 
     assert_receive %{path: "/db/_design/d/_show/f/_design/other"}
   end
+
+  test "call/5 refuses a body on the default :get method", %{client: client} do
+    # Req 0.7 would rewrite this to POST, so a show function branching on
+    # req.method would quietly take the other branch.
+    assert_raise ArgumentError, ~r/cannot send a request body with `method: :get`/, fn ->
+      Akaw.DesignDoc.Shows.call(client, "db", "d", "f", body: %{a: 1})
+    end
+  end
 end

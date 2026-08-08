@@ -485,8 +485,11 @@ defmodule Akaw.Streaming do
 
   defp feed_lines([line | rest], acc, reducer) do
     case reducer.(line, acc) do
-      {:cont, new_acc} -> feed_lines(rest, new_acc, reducer)
-      {:halt, new_acc} -> {:halt, new_acc}
+      {:cont, new_acc} ->
+        feed_lines(rest, new_acc, reducer)
+
+      {:halt, new_acc} ->
+        {:halt, new_acc}
 
       other ->
         raise ArgumentError,
@@ -498,8 +501,11 @@ defmodule Akaw.Streaming do
 
   defp feed_items([item | rest], acc, reducer) do
     case reducer.(item, acc) do
-      {:cont, new_acc} -> feed_items(rest, new_acc, reducer)
-      {:halt, new_acc} -> {:halt, new_acc}
+      {:cont, new_acc} ->
+        feed_items(rest, new_acc, reducer)
+
+      {:halt, new_acc} ->
+        {:halt, new_acc}
 
       other ->
         raise ArgumentError,
@@ -511,8 +517,11 @@ defmodule Akaw.Streaming do
 
   defp flush_tail_line(tail, acc, reducer) do
     case reducer.(tail, acc) do
-      {:cont, new_acc} -> new_acc
-      {:halt, new_acc} -> new_acc
+      {:cont, new_acc} ->
+        new_acc
+
+      {:halt, new_acc} ->
+        new_acc
 
       other ->
         raise ArgumentError,
