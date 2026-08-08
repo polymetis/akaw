@@ -76,6 +76,9 @@ defmodule Akaw.Request do
       # Response JSON decodes with the OTP-native JSON module, not Req's
       # Jason default — one parser in the app, one error struct, and the
       # faster one on CouchDB-shaped payloads (measured 1.17-1.99x).
+      # Note this REPLACES Req's default [:json, :json_api] decoder
+      # pair: application/vnd.api+json (reachable only via an attachment
+      # stored with that type) now comes back as raw bytes.
       decoders: [json: &decode_json_native/1]
     ]
     |> apply_auth(client.auth)

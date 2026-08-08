@@ -144,6 +144,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Wire shape is unchanged: `content-type`/`accept` are set exactly as
   before.
 
+  Two migration notes. Encoding now dispatches through the stdlib
+  `JSON.Encoder` protocol, not `Jason.Encoder`: a struct that only
+  carries a `Jason.Encoder` implementation (`@derive Jason.Encoder` on
+  your doc structs, `Decimal` < 2.3) raises `Protocol.UndefinedError`
+  at request-build time — derive or implement `JSON.Encoder` instead
+  (Elixir's calendar types are covered out of the box). And the decoder
+  hook replaces Req's default `[:json, :json_api]` pair, so an
+  attachment stored as `application/vnd.api+json` comes back as raw
+  bytes rather than auto-decoded — consistent with the archive
+  content-type posture above; CouchDB's own API always answers
+  `application/json`.
+
 ### Fixed
 
 - **Four documented JSON-typed query params are now actually
