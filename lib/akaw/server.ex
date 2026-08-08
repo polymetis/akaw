@@ -149,7 +149,7 @@ defmodule Akaw.Server do
 
     Akaw.Streaming.chunks(client, :get, "/_db_updates", [params: params] ++ req_opts)
     |> Akaw.LineStream.lines()
-    |> Stream.map(&JSON.decode!/1)
+    |> Stream.map(&Akaw.Streaming.decode_feed_line!/1)
   end
 
   @doc """
@@ -190,7 +190,7 @@ defmodule Akaw.Server do
       "/_db_updates",
       [params: params] ++ req_opts,
       acc,
-      fn line, a -> reducer.(JSON.decode!(line), a) end
+      fn line, a -> reducer.(Akaw.Streaming.decode_feed_line!(line), a) end
     )
   end
 

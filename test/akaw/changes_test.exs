@@ -55,6 +55,40 @@ defmodule Akaw.ChangesTest do
     end
   end
 
+  describe "feed line decoding" do
+    defp corrupt_line_plug do
+      fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, ~s|{"seq":"1-a","id":"ok"}\n{"seq": CORRUPT\n|)
+      end
+    end
+
+    test "stream/3 raises stream_decode_error on a corrupt line, not a bare JSON error" do
+      client = Akaw.new(base_url: "http://x", req_options: [plug: corrupt_line_plug()])
+
+      error =
+        assert_raise Akaw.Error, ~r/stream_decode_error|failed to decode/, fn ->
+          client |> Akaw.Changes.stream("db") |> Enum.to_list()
+        end
+
+      assert error.error == "stream_decode_error"
+    end
+
+    test "reduce_while/5 raises the same legible error for a corrupt line" do
+      client = Akaw.new(base_url: "http://x", req_options: [plug: corrupt_line_plug()])
+
+      error =
+        assert_raise Akaw.Error, fn ->
+          Akaw.Changes.reduce_while(client, "db", [], fn change, acc ->
+            {:cont, [change | acc]}
+          end)
+        end
+
+      assert error.error == "stream_decode_error"
+    end
+  end
+
   describe "stream/3 transport opts" do
     test "routes transport opts out of the query string" do
       # The lazy continuous stream gets the same held-open

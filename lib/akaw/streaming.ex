@@ -382,6 +382,28 @@ defmodule Akaw.Streaming do
   end
 
   @doc """
+  Decode one line of a line-delimited feed as JSON, raising a legible
+  `%Akaw.Error{error: "stream_decode_error"}` instead of a bare
+  `JSON.DecodeError` when the line is corrupt — the same posture
+  `Akaw.JsonItemStream` takes for row streams. Shared by the `_changes`
+  and `_db_updates` feed decoders.
+  """
+  @spec decode_feed_line!(String.t()) :: term()
+  def decode_feed_line!(line) do
+    JSON.decode!(line)
+  rescue
+    decode_error ->
+      reraise %Error{
+                status: nil,
+                error: "stream_decode_error",
+                reason:
+                  "feed line failed to decode: #{inspect(decode_error)}. Source line: " <>
+                    inspect(String.slice(line, 0, 200))
+              },
+              __STACKTRACE__
+  end
+
+  @doc """
   Reduce over raw binary chunks of the response body. Returns
   `{:ok, final_acc}` on completion (including early `:halt`), or
   `{:error, %Akaw.Error{}}` on HTTP or transport failure.

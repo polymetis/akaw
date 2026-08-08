@@ -129,6 +129,8 @@ defmodule Akaw.Changes do
     * HTTP non-2xx (e.g. 404 missing db) — CouchDB's status and error body
     * transport failures — `error: "stream_transport_error"`, with the
       underlying Mint/Finch exception in `body.exception`
+    * a corrupt feed line — `error: "stream_decode_error"` with the
+      offending line excerpted in `:reason`
 
   > #### Backpressure & mailbox ownership {: .warning}
   >
@@ -150,7 +152,7 @@ defmodule Akaw.Changes do
 
     Streaming.chunks(client, :get, "/#{Path.encode(db)}/_changes", [params: params] ++ req_opts)
     |> LineStream.lines()
-    |> Stream.map(&JSON.decode!/1)
+    |> Stream.map(&Streaming.decode_feed_line!/1)
   end
 
   @doc """
@@ -169,7 +171,7 @@ defmodule Akaw.Changes do
       [params: params, json: body] ++ req_opts
     )
     |> LineStream.lines()
-    |> Stream.map(&JSON.decode!/1)
+    |> Stream.map(&Streaming.decode_feed_line!/1)
   end
 
   @doc """
@@ -293,6 +295,6 @@ defmodule Akaw.Changes do
   end
 
   defp decode_then(reducer) do
-    fn line, acc -> reducer.(JSON.decode!(line), acc) end
+    fn line, acc -> reducer.(Streaming.decode_feed_line!(line), acc) end
   end
 end
