@@ -5,9 +5,18 @@ defmodule Akaw.IntegrationHelpers do
   By default targets `http://localhost:5984` with `admin:password`. Override
   via env vars:
 
-    * `AKAW_TEST_URL` — base URL (e.g. `http://localhost:15984`)
+    * `AKAW_TEST_URL` — base URL
     * `AKAW_TEST_USER` — admin username
     * `AKAW_TEST_PASS` — admin password
+
+  One constraint on `AKAW_TEST_URL`: the replication tests hand it to
+  CouchDB as a replication source/target, and replication runs
+  *server-side* — so the URL must be reachable from inside CouchDB
+  itself, not just from the test host. A container published on a
+  remapped host port (say `-p 15984:5984`, `AKAW_TEST_URL=http://localhost:15984`)
+  passes everything except replication, which dies with `econnrefused`:
+  inside the container, localhost:15984 doesn't exist. Publish on
+  `5984:5984` (as CI does) and the URL resolves on both sides.
 
   Run integration tests with:
 
