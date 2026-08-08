@@ -26,8 +26,9 @@ defmodule Akaw.DesignDoc.Rewrites do
 
   ## Options
 
-    * `:method` — `:get` (default), or anything else accepted by
-      `Akaw.Request`
+    * `:method` — `:get` (default), any other HTTP verb atom (`:post`,
+      `:put`, `:delete`, `:head`, `:patch`, `:options`), or a string for a
+      non-standard verb
     * `:body` — request body, sent as JSON. Requires a method that carries
       one: passing a body with `method: :get` raises `ArgumentError`, since
       a rewrite rule pinned to `"method": "GET"` would stop matching. Use
