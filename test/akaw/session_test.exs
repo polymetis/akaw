@@ -1,6 +1,8 @@
 defmodule Akaw.SessionTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   defp recording_client(reply_fn) do
     test = self()
 
@@ -17,7 +19,7 @@ defmodule Akaw.SessionTest do
       reply_fn.(conn)
     end
 
-    Akaw.new(base_url: "http://couch.example", req_options: [plug: plug])
+    Loopback.client(plug)
   end
 
   describe "create/3" do
@@ -28,7 +30,7 @@ defmodule Akaw.SessionTest do
         |> Plug.Conn.put_resp_content_type("application/json")
         |> Plug.Conn.send_resp(
           200,
-          Jason.encode!(%{"ok" => true, "name" => "admin", "roles" => ["_admin"]})
+          JSON.encode!(%{"ok" => true, "name" => "admin", "roles" => ["_admin"]})
         )
       end
 
@@ -38,7 +40,7 @@ defmodule Akaw.SessionTest do
                Akaw.Session.create(client, "admin", "secret")
 
       assert_receive %{method: "POST", path: "/_session", body: posted}
-      assert Jason.decode!(posted) == %{"name" => "admin", "password" => "secret"}
+      assert JSON.decode!(posted) == %{"name" => "admin", "password" => "secret"}
 
       assert body == %{"ok" => true, "name" => "admin", "roles" => ["_admin"]}
       assert {"cookie", "AuthSession=tok123"} in authed.headers
@@ -54,15 +56,10 @@ defmodule Akaw.SessionTest do
         conn
         |> Plug.Conn.put_resp_header("set-cookie", "AuthSession=tok; Path=/")
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.send_resp(200, Jason.encode!(%{"ok" => true}))
+        |> Plug.Conn.send_resp(200, JSON.encode!(%{"ok" => true}))
       end
 
-      client =
-        Akaw.new(
-          base_url: "http://x",
-          auth: {:basic, "admin", "pw"},
-          req_options: [plug: plug]
-        )
+      client = Loopback.client(plug, auth: {:basic, "admin", "pw"})
 
       assert {:ok, authed, _} = Akaw.Session.create(client, "admin", "pw")
       assert authed.auth == nil
@@ -73,7 +70,7 @@ defmodule Akaw.SessionTest do
       reply = fn conn ->
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.send_resp(200, Jason.encode!(%{"ok" => true}))
+        |> Plug.Conn.send_resp(200, JSON.encode!(%{"ok" => true}))
       end
 
       client = recording_client(reply)
@@ -86,15 +83,11 @@ defmodule Akaw.SessionTest do
         conn
         |> Plug.Conn.put_resp_header("set-cookie", "AuthSession=NEW; Path=/")
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.send_resp(200, Jason.encode!(%{"ok" => true}))
+        |> Plug.Conn.send_resp(200, JSON.encode!(%{"ok" => true}))
       end
 
       client =
-        Akaw.new(
-          base_url: "http://x",
-          headers: [{"cookie", "AuthSession=OLD"}],
-          req_options: [plug: fn conn -> reply.(conn) end]
-        )
+        Loopback.client(fn conn -> reply.(conn) end, headers: [{"cookie", "AuthSession=OLD"}])
 
       assert {:ok, authed, _} = Akaw.Session.create(client, "u", "p")
       cookies = for {"cookie", v} <- authed.headers, do: v
@@ -107,7 +100,7 @@ defmodule Akaw.SessionTest do
         |> Plug.Conn.put_resp_content_type("application/json")
         |> Plug.Conn.send_resp(
           401,
-          Jason.encode!(%{
+          JSON.encode!(%{
             "error" => "unauthorized",
             "reason" => "Name or password is incorrect."
           })
@@ -128,13 +121,13 @@ defmodule Akaw.SessionTest do
       plug = fn conn ->
         send(test, {:method, conn.method, :path, conn.request_path})
 
-        Req.Test.json(conn, %{
+        Loopback.json(conn, %{
           "ok" => true,
           "userCtx" => %{"name" => "admin", "roles" => ["_admin"]}
         })
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+      client = Loopback.client(plug)
 
       assert {:ok, %{"userCtx" => %{"name" => "admin"}}} = Akaw.Session.info(client)
       assert_receive {:method, "GET", :path, "/_session"}
@@ -147,10 +140,10 @@ defmodule Akaw.SessionTest do
 
       plug = fn conn ->
         send(test, {:method, conn.method, :path, conn.request_path})
-        Req.Test.json(conn, %{"ok" => true})
+        Loopback.json(conn, %{"ok" => true})
       end
 
-      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+      client = Loopback.client(plug)
 
       assert {:ok, %{"ok" => true}} = Akaw.Session.delete(client)
       assert_receive {:method, "DELETE", :path, "/_session"}
@@ -168,10 +161,10 @@ defmodule Akaw.SessionTest do
         conn
         |> Plug.Conn.put_resp_header("set-cookie", "AuthSession=tok_#{n}; Path=/")
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.send_resp(200, Jason.encode!(%{"ok" => true, "name" => "admin"}))
+        |> Plug.Conn.send_resp(200, JSON.encode!(%{"ok" => true, "name" => "admin"}))
       end
 
-      base = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+      base = Loopback.client(plug)
 
       {:ok, c1, _} = Akaw.Session.create(base, "admin", "pw")
       assert {"cookie", "AuthSession=tok_1"} in c1.headers
@@ -192,15 +185,10 @@ defmodule Akaw.SessionTest do
       reply = fn conn ->
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.send_resp(200, Jason.encode!(%{"ok" => true}))
+        |> Plug.Conn.send_resp(200, JSON.encode!(%{"ok" => true}))
       end
 
-      authed =
-        Akaw.new(
-          base_url: "http://x",
-          headers: [{"cookie", "AuthSession=live"}],
-          req_options: [plug: reply]
-        )
+      authed = Loopback.client(reply, headers: [{"cookie", "AuthSession=live"}])
 
       assert {:error, %Akaw.Error{status: nil, error: "no_auth_cookie"}} =
                Akaw.Session.refresh(authed, "admin", "pw")
@@ -215,15 +203,10 @@ defmodule Akaw.SessionTest do
         conn
         |> Plug.Conn.put_resp_header("set-cookie", "AuthSession=NEW; Path=/")
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.send_resp(200, Jason.encode!(%{"ok" => true}))
+        |> Plug.Conn.send_resp(200, JSON.encode!(%{"ok" => true}))
       end
 
-      stale =
-        Akaw.new(
-          base_url: "http://x",
-          headers: [{"cookie", "AuthSession=STALE"}],
-          req_options: [plug: plug]
-        )
+      stale = Loopback.client(plug, headers: [{"cookie", "AuthSession=STALE"}])
 
       assert {:ok, _, _} = Akaw.Session.refresh(stale, "admin", "pw")
 
