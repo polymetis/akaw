@@ -186,6 +186,12 @@ defmodule Akaw.Request do
     end
   end
 
+  defp handle_response({:ok, %Req.Response{status: status, body: body}}, _return_kind),
+    do: {:error, build_error(status, body)}
+
+  defp handle_response({:error, exception}, _return_kind),
+    do: {:error, classify_error(exception)}
+
   # The one place a transport response crosses to the ENDPOINT modules:
   # every `return: :response` consumer sees %Akaw.Response{}. (The other
   # crossing is request_raw/4, whose %Req.Response{} feeds only
@@ -194,12 +200,6 @@ defmodule Akaw.Request do
     flat = for {name, values} <- headers, value <- values, do: {name, value}
     %Response{status: status, headers: flat, body: body}
   end
-
-  defp handle_response({:ok, %Req.Response{status: status, body: body}}, _return_kind),
-    do: {:error, build_error(status, body)}
-
-  defp handle_response({:error, exception}, _return_kind),
-    do: {:error, classify_error(exception)}
 
   # Req's decode_body step returns codec exceptions through the same
   # {:error, exception} channel as transport failures. A 200 whose body
