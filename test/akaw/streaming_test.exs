@@ -1,9 +1,10 @@
 defmodule Akaw.StreamingTest do
   use ExUnit.Case, async: true
 
-  # `Req.Test`'s plug transport cannot produce a mid-body socket close, so
-  # the `{:error, reason}` branch of `Akaw.Streaming.next_chunk/1` is only
-  # reachable through a real socket. This raw listener sends a valid chunked
+  # A cooperative HTTP server (the Bandit loopback seam included) always
+  # finishes its chunked framing, so the `{:error, reason}` branch of
+  # `Akaw.Streaming.next_chunk/1` is only reachable through a socket that
+  # misbehaves on purpose. This raw listener sends a valid chunked
   # response header plus one chunk, then hangs up without the terminating
   # zero-length chunk — which is what a dropped CouchDB connection looks
   # like from the client side.

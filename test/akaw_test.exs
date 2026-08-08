@@ -1,6 +1,8 @@
 defmodule AkawTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
+
   doctest Akaw
   doctest Akaw.Error
   doctest Akaw.Params
@@ -102,7 +104,7 @@ defmodule AkawTest do
             retry_delay: 10,
             compressed: false,
             headers: [{"x-extra", "1"}],
-            plug: fn conn -> Req.Test.json(conn, %{}) end
+            plug: fn conn -> Loopback.json(conn, %{}) end
           ]
         )
 

@@ -2,6 +2,7 @@ defmodule Akaw.PropertiesTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
+  alias Akaw.Loopback
   alias Akaw.{LineStream, Params}
 
   describe "Akaw.LineStream.lines/1" do
@@ -63,7 +64,7 @@ defmodule Akaw.PropertiesTest do
         result = Params.encode_json_keys([{key, value}])
         assert [{^key, encoded}] = result
         assert is_binary(encoded)
-        assert Jason.decode!(encoded) == jsonify(value)
+        assert JSON.decode!(encoded) == jsonify(value)
       end
     end
 
@@ -90,7 +91,7 @@ defmodule Akaw.PropertiesTest do
 
         assert {:limit, ^limit} = List.keyfind(result, :limit, 0)
         {:startkey, encoded} = List.keyfind(result, :startkey, 0)
-        assert Jason.decode!(encoded) == jsonify(json_v)
+        assert JSON.decode!(encoded) == jsonify(json_v)
       end
     end
   end
@@ -123,15 +124,10 @@ defmodule Akaw.PropertiesTest do
 
         plug = fn conn ->
           send(test, Plug.Conn.get_req_header(conn, "authorization"))
-          Req.Test.json(conn, %{})
+          Loopback.json(conn, %{})
         end
 
-        client =
-          Akaw.new(
-            base_url: "http://x",
-            auth: {:basic, user, pass},
-            req_options: [plug: plug]
-          )
+        client = Loopback.client(plug, auth: {:basic, user, pass})
 
         assert {:ok, _} = Akaw.Server.info(client)
         assert_receive [auth_header]
@@ -161,8 +157,8 @@ defmodule Akaw.PropertiesTest do
     ])
   end
 
-  # Round-trip a value through Jason — atom map keys become strings, etc.
-  defp jsonify(v), do: v |> Jason.encode!() |> Jason.decode!()
+  # Round-trip a value through JSON — atom map keys become strings, etc.
+  defp jsonify(v), do: v |> JSON.encode!() |> JSON.decode!()
 
   # Split a binary into chunks of the given byte sizes. If `sizes` runs
   # out before the binary, the rest is emitted as one final chunk.
