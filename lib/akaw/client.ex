@@ -39,7 +39,7 @@ defmodule Akaw.Client do
   @type t :: %__MODULE__{
           base_url: String.t(),
           auth: auth(),
-          finch: atom() | nil,
+          finch: atom() | keyword() | nil,
           headers: list({String.t(), String.t()}),
           req_options: keyword()
         }

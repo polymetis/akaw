@@ -79,7 +79,50 @@ defmodule Akaw.Request do
     |> Keyword.merge(req_options)
     |> Keyword.merge(opts)
     |> check_body_method!()
+    |> normalize_finch()
     |> Req.new()
+  end
+
+  # Req 0.7 moved the Finch knobs behind a `finch: [...]` keyword and
+  # deprecated the flat spellings, emitting an IO.warn *per request* —
+  # measured at ~0.3ms each, which roughly doubled akaw's client-side
+  # per-request cost for anyone using a named pool.
+  #
+  # akaw keeps its friendly flat public API (`Akaw.new(finch: MyApp.Finch)`,
+  # `pool_timeout: 5_000`) and translates here instead. This runs last, after
+  # the req_options and per-call merges, so it also catches a `:finch` a
+  # caller set directly through `:req_options`.
+  #
+  # `:receive_timeout` and `:connect_options` are NOT deprecated and stay
+  # flat — don't "helpfully" fold those in too.
+  defp normalize_finch(opts) do
+    opts
+    |> normalize_finch_name()
+    |> fold_finch_request_opts()
+  end
+
+  defp normalize_finch_name(opts) do
+    case Keyword.get(opts, :finch) do
+      nil -> opts
+      name when is_atom(name) -> Keyword.put(opts, :finch, name: name)
+      _already_keyword -> opts
+    end
+  end
+
+  # `:pool_timeout` belongs inside `finch: [...]` now — except alongside
+  # `:connect_options`, where Req raises if `:finch` is present at all
+  # (`finch.ex`: "cannot set both :finch and :connect_options"). There we
+  # leave it flat and let Req's deprecation warning stand, rather than
+  # turning a warning into a crash.
+  defp fold_finch_request_opts(opts) do
+    if Keyword.has_key?(opts, :connect_options) do
+      opts
+    else
+      case Keyword.split(opts, [:pool_timeout]) do
+        {[], _} -> opts
+        {flat, rest} -> Keyword.update(rest, :finch, flat, &Keyword.merge(&1, flat))
+      end
+    end
   end
 
   # Req option keys that end up setting `%Req.Request{}.body`.

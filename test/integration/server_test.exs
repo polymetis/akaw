@@ -60,4 +60,34 @@ defmodule Akaw.Integration.ServerTest do
 
     assert is_list(results)
   end
+
+  describe "custom Finch pool" do
+    test "a named pool routes requests and emits no Req deprecation warning" do
+      name = :"akaw_it_finch_#{System.unique_integer([:positive])}"
+      start_supervised!({Finch, name: name})
+
+      stderr =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert {:ok, info} = Akaw.Server.info(client(finch: name))
+          assert info["couchdb"] == "Welcome"
+        end)
+
+      # Req 0.7 deprecated the bare `finch: name` spelling and warns once per
+      # request; Akaw.Request translates it, so a named pool stays silent.
+      refute stderr =~ "deprecated"
+    end
+
+    test "the keyword form carries extra Finch options through" do
+      name = :"akaw_it_finch_kw_#{System.unique_integer([:positive])}"
+      start_supervised!({Finch, name: name})
+
+      stderr =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert {:ok, info} = Akaw.Server.info(client(finch: [name: name, pool_tag: :bulk]))
+          assert info["couchdb"] == "Welcome"
+        end)
+
+      refute stderr =~ "deprecated"
+    end
+  end
 end

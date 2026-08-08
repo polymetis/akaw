@@ -131,6 +131,36 @@ defmodule Akaw.RequestTest do
       assert_receive {:accept_encoding, []}
     end
 
+    test "a flat :pool_timeout is folded into finch: [...] rather than deprecated" do
+      plug = fn conn -> Req.Test.json(conn, %{}) end
+
+      stderr =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert {:ok, _} =
+                   Request.request(client_with(plug), :get, "/", pool_timeout: 5_000)
+        end)
+
+      refute stderr =~ "deprecated"
+    end
+
+    test ":pool_timeout stays flat alongside :connect_options, where Req would raise" do
+      # Req raises "cannot set both :finch and :connect_options" if :finch is
+      # present at all, so folding here would turn a warning into a crash.
+      # We keep the warning instead. Documented, deliberate corner.
+      plug = fn conn -> Req.Test.json(conn, %{}) end
+
+      stderr =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert {:ok, _} =
+                   Request.request(client_with(plug), :get, "/",
+                     connect_options: [timeout: 1_000],
+                     pool_timeout: 5_000
+                   )
+        end)
+
+      assert stderr =~ "pool_timeout" and stderr =~ "deprecated"
+    end
+
     test "transport exceptions are wrapped into %Akaw.Error{status: nil}" do
       plug = fn conn -> Req.Test.transport_error(conn, :econnrefused) end
       client = client_with(plug)

@@ -145,8 +145,11 @@ defmodule Akaw do
         * `{:basic, username, password}` — HTTP basic auth
         * `{:bearer, token}` — bearer token (JWT)
 
-    * `:finch` — name of a custom Finch pool, e.g. `MyApp.Finch`. Defaults
-      to Req's built-in pool.
+    * `:finch` — name of a custom Finch pool, e.g. `MyApp.Finch`, or a
+      keyword list of Finch options, e.g. `[name: MyApp.Finch, pool_tag: :bulk]`.
+      Defaults to Req's built-in pool. akaw translates the plain-atom form
+      into Req 0.7's `finch: [name: …]` spelling internally, so it stays
+      warning-free.
 
     * `:headers` — list of `{name, value}` headers added to every request.
 

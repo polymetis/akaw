@@ -214,8 +214,13 @@ defmodule Akaw.Streaming do
   @doc """
   Split a `reduce_while` opts keyword into `{req_opts, couchdb_opts}`,
   pulling out the small set of Finch/Mint transport options we let
-  callers override per call — they ride to Finch via Req's option
-  passthrough (everything else is destined for query params).
+  callers override per call (everything else is destined for query
+  params).
+
+  `:receive_timeout` and `:connect_options` ride to Finch through Req's
+  option passthrough. `:pool_timeout` is folded into Req 0.7's
+  `finch: [...]` keyword by `Akaw.Request`, which keeps the flat spelling
+  here warning-free.
   """
   @spec split_req_opts(keyword()) :: {keyword(), keyword()}
   def split_req_opts(opts) when is_list(opts) do
