@@ -60,6 +60,22 @@ defmodule Akaw.Integration.ServerTest do
 
     assert is_list(results)
   end
+end
+
+defmodule Akaw.Integration.ServerFinchPoolTest do
+  # async: false — deliberately, and it's the load-bearing part of these
+  # tests. They capture :stderr, and ExUnit shares named-device capture
+  # content among ALL concurrently capturing tests — while
+  # request_test.exs's ":pool_timeout stays flat alongside
+  # :connect_options" test *deliberately emits* the exact "deprecated"
+  # warning refuted here. Under async the warning bled across into this
+  # capture (observed at seed 784254). Sync tests run serially after the
+  # whole async phase, so nothing can interleave with the capture.
+  use ExUnit.Case, async: false
+
+  @moduletag :integration
+
+  import Akaw.IntegrationHelpers
 
   describe "custom Finch pool" do
     test "a named pool routes requests and emits no Req deprecation warning" do
