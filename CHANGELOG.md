@@ -9,6 +9,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Requires Req `~> 0.7`** (was `~> 0.5`). This is a hard floor — Akaw now
+  uses Req 0.7's `finch: [name: …]` option spelling, which raises on 0.5. If
+  your application pins Req itself, it needs the same bump.
+
+  Also moves to Finch 0.23, Mint 1.9.3, and Plug 1.20.3 (test-only).
+
+- **`Akaw.new/1` lifts credentials out of `:base_url`.** Given
+  `base_url: "http://admin:pw@host:5984"`, the credential is moved into
+  `:auth` as `{:basic, "admin", "pw"}` and the stored `:base_url` becomes
+  `"http://host:5984"`. An explicit `:auth` still wins.
+
+  Req 0.5 discarded URL credentials entirely (CouchDB answered 401); Req 0.7
+  honours them. Handling it in `Akaw.new/1` keeps the behaviour the same
+  either way, and keeps the secret out of `inspect/1` output — `Akaw.Client`
+  redacts `:auth` but deliberately prints `:base_url`.
+
+- **Sending a request body with `method: :get` now raises `ArgumentError`**
+  in `Akaw.DesignDoc.Shows`, `Lists`, `Rewrites`, and `Updates`.
+
+  Req 0.7 silently rewrites a GET carrying a body into a POST. Against
+  CouchDB that changes which handler runs: a `_rewrite` rule pinned to
+  `"method": "GET"` stops matching and returns 404, and a `_show`/`_list`
+  function branching on `req.method` takes the other branch without erroring.
+  Rather than let the verb change under you, Akaw refuses the combination.
+
+  Pass `method: :post`, or the string `method: "GET"` if you genuinely want a
+  GET that carries a body — Akaw sends that verbatim.
+
+- **Query parameters are one-value-per-key.** Req 0.7 deduplicates params,
+  keeping the last occurrence, where Req 0.5 appended. A repeated key in a
+  `:params` keyword list no longer produces two query parameters, and for
+  `Akaw.DesignDoc.Rewrites`, `:params` now *overrides* same-named parameters
+  already present in the rewrite path rather than appending to them.
+
+- **Attachments with an archive content type are no longer auto-decoded.**
+  Req used to silently expand `application/zip`, `application/gzip`
+  (and `x-gzip`), `application/x-tar`, `application/x-tgz`, and
+  `application/zstd` response bodies. `Akaw.Attachment.get/5` now returns the
+  raw bytes for those, which is what its documentation always said it did.
+  JSON attachments are still decoded.
+
+- **Streaming transport failures report a stable `:reason`.**
+  `%Akaw.Error{error: "stream_transport_error"}` previously carried an
+  `inspect/1` dump of the underlying exception struct in `:reason`, which
+  changed shape with the Finch version. It is now `Exception.message/1`
+  (e.g. `"socket closed"`), and the struct itself is available at
+  `body.exception`, matching the non-streaming path.
+
 - Akaw is now developed and tested against **Erlang/OTP 29.0.5** and
   **Elixir 1.20.3**.
 
@@ -17,6 +65,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   module, introduced in Elixir 1.18). Nothing in the library requires 1.19 or
   1.20, and the full suite — including the integration tests against a real
   CouchDB — passes on both the old and the new toolchain.
+
+### Fixed
+
+- **Responses are compressed again.** Req 0.6.1 made decompression opt-in, so
+  Akaw silently stopped negotiating gzip. Measured against CouchDB 3.5.1 on
+  the same request: 129 bytes with gzip versus 17,600 without. This only
+  affected attachments — CouchDB does not compress its JSON API responses —
+  but it was pure loss there. Pass `compressed: false` per client or per call
+  if you want the old opt-in behaviour.
+
+- **`Akaw.Document.delete/5` and `Akaw.Attachment.delete/6` no longer let a
+  stray `rev:` in `opts` override the positional `rev` argument.** Under Req
+  0.7's param deduplication the last occurrence won, which could turn a valid
+  delete into a 409 conflict. The positional argument is now authoritative.
+
+- **A named Finch pool no longer emits a deprecation warning on every
+  request.** `Akaw.new(finch: MyApp.Finch)` and the `:pool_timeout` escape
+  hatch keep their flat spelling; Akaw translates them to Req 0.7's
+  `finch: [...]` form internally. This also removes roughly 0.3 ms of
+  `IO.warn` overhead per warning per request.
+
+  The one exception is `:pool_timeout` combined with `:connect_options`,
+  where Req raises if `:finch` is set at all — the flat spelling and its
+  warning stand there.
+
+### Added
+
+- `:finch` now also accepts a keyword list of Finch options, e.g.
+  `Akaw.new(finch: [name: MyApp.Finch, pool_tag: :bulk])`. A bare pool name
+  still works.
 
 ### Notes for consumers
 
