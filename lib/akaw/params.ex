@@ -44,6 +44,52 @@ defmodule Akaw.Params do
     encode_with_keys(opts, @json_keys ++ @search_extra_keys)
   end
 
+  @doc """
+  Encoding for document-endpoint params (`Akaw.Document.get/4`,
+  `Akaw.Documents.bulk_get/4`): `atts_since` is always a JSON array of
+  revs; `open_revs` is either the literal `all` — which must pass
+  through bare, CouchDB rejects a quoted `"all"` — or a JSON array.
+
+  ## Examples
+
+      iex> Akaw.Params.encode_doc_keys(atts_since: ["1-abc"], rev: "2-def")
+      [atts_since: ~s|["1-abc"]|, rev: "2-def"]
+
+      iex> Akaw.Params.encode_doc_keys(open_revs: ["1-abc", "2-def"])
+      [open_revs: ~s|["1-abc","2-def"]|]
+
+      iex> Akaw.Params.encode_doc_keys(open_revs: "all")
+      [open_revs: "all"]
+  """
+  @spec encode_doc_keys(keyword()) :: keyword()
+  def encode_doc_keys(opts) when is_list(opts) do
+    Enum.map(opts, fn
+      {:open_revs, revs} when is_list(revs) -> {:open_revs, JSON.encode!(revs)}
+      {:atts_since, revs} -> {:atts_since, JSON.encode!(revs)}
+      pair -> pair
+    end)
+  end
+
+  @doc """
+  Encoding for `_changes` params: `doc_ids` (with `filter: "_doc_ids"`)
+  is a JSON array in the query string.
+
+  ## Examples
+
+      iex> Akaw.Params.encode_changes_keys(doc_ids: ["a", "c"], filter: "_doc_ids")
+      [doc_ids: ~s|["a","c"]|, filter: "_doc_ids"]
+
+      iex> Akaw.Params.encode_changes_keys(since: "now")
+      [since: "now"]
+  """
+  @spec encode_changes_keys(keyword()) :: keyword()
+  def encode_changes_keys(opts) when is_list(opts) do
+    Enum.map(opts, fn
+      {:doc_ids, ids} when is_list(ids) -> {:doc_ids, JSON.encode!(ids)}
+      pair -> pair
+    end)
+  end
+
   defp encode_with_keys(opts, keys) do
     Enum.map(opts, fn
       {k, v} -> if k in keys, do: {k, JSON.encode!(v)}, else: {k, v}

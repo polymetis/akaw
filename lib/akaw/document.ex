@@ -11,7 +11,7 @@ defmodule Akaw.Document do
   `_design/myddoc` keep their literal slash, but the suffix is still encoded.
   """
 
-  alias Akaw.{Client, Request, Path}
+  alias Akaw.{Client, Params, Request, Path}
 
   @doc """
   `HEAD /{db}/{docid}` — verify a document exists.
@@ -35,7 +35,10 @@ defmodule Akaw.Document do
   ## Common options (forwarded as query params)
 
     * `:rev` — fetch a specific revision
-    * `:revs`, `:revs_info`, `:open_revs` — revision metadata
+    * `:revs`, `:revs_info`, `:open_revs` — revision metadata.
+      `:open_revs` takes `"all"` or a list of revs; `:atts_since` takes
+      a list of revs. Pass the raw list — Akaw JSON-encodes it for the
+      URL.
     * `:conflicts`, `:deleted_conflicts` — include conflict info
     * `:attachments`, `:att_encoding_info`, `:atts_since` — attachment handling
     * `:latest`, `:local_seq`, `:meta`
@@ -46,7 +49,7 @@ defmodule Akaw.Document do
           {:ok, map()} | {:error, term()}
   def get(%Client{} = client, db, doc_id, opts \\ [])
       when is_binary(db) and is_binary(doc_id) do
-    Request.request(client, :get, path(db, doc_id), params: opts)
+    Request.request(client, :get, path(db, doc_id), params: Params.encode_doc_keys(opts))
   end
 
   @doc """

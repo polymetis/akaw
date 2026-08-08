@@ -99,6 +99,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Four documented JSON-typed query params are now actually
+  JSON-encoded.** The library-wide contract — "pass the raw value, Akaw
+  encodes it" — held for `startkey`/`endkey` on the `_all_docs` family
+  but not for four documented siblings: `Akaw.Server.all_dbs/2`'s
+  `:startkey`/`:endkey` (sent bare; CouchDB answers 400),
+  `Akaw.Document.get/4`'s `:atts_since`/`:open_revs` (the natural list
+  raised inside Req's query encoder before any I/O),
+  `Akaw.Documents.bulk_get/4`'s `:atts_since`, and
+  `Akaw.Changes.get/3`'s `:doc_ids` (with `filter: "_doc_ids"`). All
+  four now encode the raw value; `open_revs: "all"` still passes
+  through bare, since CouchDB rejects a JSON-quoted `"all"`.
+
 - **Quiet longpoll and continuous feeds no longer die at the transport's
   15-second receive timeout.** CouchDB legitimately holds a quiet feed
   open until `:timeout` (server default 60s) — or indefinitely with a

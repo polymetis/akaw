@@ -42,6 +42,19 @@ defmodule Akaw.ChangesTest do
       assert qs =~ "include_docs=true"
     end
 
+    test "JSON-encodes doc_ids for the query string", %{client: client} do
+      # ?doc_ids=["a","c"] (a JSON array) is what filter=_doc_ids
+      # requires; the raw list previously reached Req's query encoder
+      # unserialized.
+      assert {:ok, _} =
+               Akaw.Changes.get(client, "mydb", filter: "_doc_ids", doc_ids: ["a", "c"])
+
+      assert_receive %{path: "/mydb/_changes", query_string: qs}
+      decoded = URI.decode_query(qs)
+      assert decoded["doc_ids"] == ~s|["a","c"]|
+      assert decoded["filter"] == "_doc_ids"
+    end
+
     test "routes transport opts to the transport, not the query string", %{client: client} do
       assert {:ok, _} =
                Akaw.Changes.get(client, "mydb",

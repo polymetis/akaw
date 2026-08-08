@@ -168,6 +168,14 @@ defmodule Akaw.DocumentsTest do
                "docs" => [%{"id" => "a"}, %{"id" => "b", "rev" => "1-x"}]
              }
     end
+
+    test "JSON-encodes the atts_since query param", %{client: client} do
+      assert {:ok, _} =
+               Akaw.Documents.bulk_get(client, "mydb", [%{id: "a"}], atts_since: ["1-abc"])
+
+      assert_receive %{path: "/mydb/_bulk_get", query_string: qs}
+      assert URI.decode_query(qs)["atts_since"] == ~s|["1-abc"]|
+    end
   end
 
   describe "bulk_docs/4" do

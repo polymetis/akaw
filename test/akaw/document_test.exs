@@ -40,6 +40,30 @@ defmodule Akaw.DocumentTest do
     assert qs =~ "attachments=true"
   end
 
+  test "get/4 JSON-encodes atts_since and list-form open_revs", %{client: client} do
+    # Both are JSON arrays in the URL per the CouchDB API —
+    # ?atts_since=["1-abc"] — and passing the natural Elixir list
+    # previously raised inside Req's query encoder before any I/O.
+    assert {:ok, _} =
+             Akaw.Document.get(client, "mydb", "doc1",
+               atts_since: ["1-abc", "2-def"],
+               open_revs: ["3-ghi"]
+             )
+
+    assert_receive %{path: "/mydb/doc1", query_string: qs}
+    decoded = URI.decode_query(qs)
+    assert decoded["atts_since"] == ~s|["1-abc","2-def"]|
+    assert decoded["open_revs"] == ~s|["3-ghi"]|
+  end
+
+  test "get/4 passes open_revs: \"all\" through bare", %{client: client} do
+    # CouchDB takes the literal `all`, not a JSON-quoted "all".
+    assert {:ok, _} = Akaw.Document.get(client, "mydb", "doc1", open_revs: "all")
+
+    assert_receive %{path: "/mydb/doc1", query_string: qs}
+    assert URI.decode_query(qs)["open_revs"] == "all"
+  end
+
   test "put/5 → PUT /{db}/{id} with JSON body", %{client: client} do
     assert {:ok, _} = Akaw.Document.put(client, "mydb", "doc1", %{name: "alice"})
     assert_receive %{method: "PUT", path: "/mydb/doc1", body: body}

@@ -48,6 +48,18 @@ defmodule Akaw.ServerTest do
     assert qs =~ "descending=true"
   end
 
+  test "all_dbs/2 JSON-encodes startkey/endkey like its _all_docs siblings", %{client: client} do
+    # _all_dbs startkey/endkey are JSON-typed: ?startkey=users (bare) is
+    # a 400 from CouchDB, ?startkey="users" matches. Verified against
+    # real CouchDB 3.5.
+    assert {:ok, _} = Akaw.Server.all_dbs(client, startkey: "users", endkey: "usersz")
+
+    assert_receive %{path: "/_all_dbs", query_string: qs}
+    decoded = URI.decode_query(qs)
+    assert decoded["startkey"] == ~s|"users"|
+    assert decoded["endkey"] == ~s|"usersz"|
+  end
+
   test "dbs_info/2 POSTs a {keys: [...]} body", %{client: client} do
     assert {:ok, _} = Akaw.Server.dbs_info(client, ["a", "b"])
     assert_receive %{method: "POST", path: "/_dbs_info", body: body}
