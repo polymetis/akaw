@@ -6,7 +6,7 @@ defmodule Akaw.Server do
   See <https://docs.couchdb.org/en/latest/api/server/common.html>.
   """
 
-  alias Akaw.{Client, Request}
+  alias Akaw.{Client, Params, Request}
 
   @doc """
   `GET /` — meta information about the CouchDB instance.
@@ -48,13 +48,14 @@ defmodule Akaw.Server do
   ## Options
 
     * `:descending`, `:endkey`, `:limit`, `:skip`, `:startkey` — passed
-      through as query parameters.
+      through as query parameters. `:startkey`/`:endkey` are JSON-typed,
+      same as `_all_docs` — pass the raw value and Akaw encodes it.
 
   See <https://docs.couchdb.org/en/latest/api/server/common.html#all-dbs>.
   """
   @spec all_dbs(Client.t(), keyword()) :: {:ok, [String.t()]} | {:error, term()}
   def all_dbs(%Client{} = client, opts \\ []) do
-    Request.request(client, :get, "/_all_dbs", params: opts)
+    Request.request(client, :get, "/_all_dbs", params: Params.encode_json_keys(opts))
   end
 
   @doc """

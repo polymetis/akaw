@@ -42,6 +42,19 @@ defmodule Akaw.ChangesTest do
       assert qs =~ "include_docs=true"
     end
 
+    test "JSON-encodes doc_ids for the query string", %{client: client} do
+      # ?doc_ids=["a","c"] (a JSON array) is what filter=_doc_ids
+      # requires; the raw list previously reached Req's query encoder
+      # unserialized.
+      assert {:ok, _} =
+               Akaw.Changes.get(client, "mydb", filter: "_doc_ids", doc_ids: ["a", "c"])
+
+      assert_receive %{path: "/mydb/_changes", query_string: qs}
+      decoded = URI.decode_query(qs)
+      assert decoded["doc_ids"] == ~s|["a","c"]|
+      assert decoded["filter"] == "_doc_ids"
+    end
+
     test "routes transport opts to the transport, not the query string", %{client: client} do
       assert {:ok, _} =
                Akaw.Changes.get(client, "mydb",
@@ -90,6 +103,27 @@ defmodule Akaw.ChangesTest do
   end
 
   describe "stream/3 transport opts" do
+    test "JSON-encodes doc_ids on the continuous paths too" do
+      # The encoding is wired at two independent seams — split_feed_opts
+      # for get/post and continuous_params for the stream/reduce paths.
+      # This pins the second so a refactor can't drop it undetected.
+      plug = fn conn ->
+        Process.put(:akaw_continuous_docids_qs, conn.query_string)
+        Req.Test.json(conn, %{})
+      end
+
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+
+      client
+      |> Akaw.Changes.stream("mydb", filter: "_doc_ids", doc_ids: ["a", "c"])
+      |> Enum.take(1)
+
+      qs = Process.get(:akaw_continuous_docids_qs) || ""
+      decoded = URI.decode_query(qs)
+      assert decoded["feed"] == "continuous"
+      assert decoded["doc_ids"] == ~s|["a","c"]|
+    end
+
     test "routes transport opts out of the query string" do
       # The lazy continuous stream gets the same held-open
       # receive-timeout defaulting as the reduce paths; a caller's

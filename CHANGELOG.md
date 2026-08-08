@@ -99,6 +99,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Four documented JSON-typed query params are now actually
+  JSON-encoded.** The library-wide contract — "pass the raw value, Akaw
+  encodes it" — held for `startkey`/`endkey` on the `_all_docs` family
+  but not for four documented siblings: `Akaw.Server.all_dbs/2`'s
+  `:startkey`/`:endkey` (sent bare; CouchDB answers 400),
+  `Akaw.Document.get/4`'s `:atts_since`/`:open_revs` (the natural list
+  raised inside Req's query encoder before any I/O),
+  `Akaw.Documents.bulk_get/4`'s `:atts_since`, and `:doc_ids` (with
+  `filter: "_doc_ids"`) on every `Akaw.Changes` feed path — `get/3`,
+  `post/4`, the lazy streams, and the `reduce_while` variants. All
+  four now encode the raw value; `open_revs: "all"` still passes
+  through bare, since CouchDB rejects a JSON-quoted `"all"`.
+
+  Migration note if you were pre-encoding as a workaround: pass the raw
+  value now. `atts_since`/`open_revs`/`doc_ids` guard on lists, so a
+  pre-encoded JSON string still passes through unchanged — but
+  `all_dbs/2`'s `startkey`/`endkey` cannot distinguish a pre-quoted
+  string from a raw one (a raw string is a legitimate key), so a
+  pre-quoted `~s|"users"|` now double-encodes and silently matches
+  nothing. Drop the quoting.
+
+- **`Akaw.Document.copy/5` percent-encodes the destination id in the
+  `Destination` header.** CouchDB splits that header on a bare `?` to
+  find an overwrite rev, so `copy(client, db, "src", "faq?v2")` was
+  parsed as id `"faq"` + rev `"v2"` and errored — while the same string
+  worked fine as a *source* id, which does get encoded into the path.
+  CouchDB decodes the header (verified against 3.5: `faq%3Fv2` creates
+  the doc id `faq?v2`, and the `?rev=` overwrite form composes with an
+  encoded id), so the destination now gets the same `Path.encode_id/1`
+  treatment as the source.
+
 - **Quiet longpoll and continuous feeds no longer die at the transport's
   15-second receive timeout.** CouchDB legitimately holds a quiet feed
   open until `:timeout` (server default 60s) — or indefinitely with a

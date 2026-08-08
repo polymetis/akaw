@@ -11,7 +11,7 @@ defmodule Akaw.Document do
   `_design/myddoc` keep their literal slash, but the suffix is still encoded.
   """
 
-  alias Akaw.{Client, Request, Path}
+  alias Akaw.{Client, Params, Request, Path}
 
   @doc """
   `HEAD /{db}/{docid}` — verify a document exists.
@@ -35,7 +35,10 @@ defmodule Akaw.Document do
   ## Common options (forwarded as query params)
 
     * `:rev` — fetch a specific revision
-    * `:revs`, `:revs_info`, `:open_revs` — revision metadata
+    * `:revs`, `:revs_info`, `:open_revs` — revision metadata.
+      `:open_revs` takes `"all"` or a list of revs; `:atts_since` takes
+      a list of revs. Pass the raw list — Akaw JSON-encodes it for the
+      URL.
     * `:conflicts`, `:deleted_conflicts` — include conflict info
     * `:attachments`, `:att_encoding_info`, `:atts_since` — attachment handling
     * `:latest`, `:local_seq`, `:meta`
@@ -46,7 +49,7 @@ defmodule Akaw.Document do
           {:ok, map()} | {:error, term()}
   def get(%Client{} = client, db, doc_id, opts \\ [])
       when is_binary(db) and is_binary(doc_id) do
-    Request.request(client, :get, path(db, doc_id), params: opts)
+    Request.request(client, :get, path(db, doc_id), params: Params.encode_doc_keys(opts))
   end
 
   @doc """
@@ -95,6 +98,12 @@ defmodule Akaw.Document do
     * `:rev` — copy a specific source revision
     * `:destination_rev` — overwrite an existing destination at this rev
       (formatted into the `Destination` header as `"{dest}?rev={rev}"`)
+
+  The destination id is percent-encoded into the header the same way a
+  source id is encoded into the path — CouchDB decodes it, so ids
+  containing `?`, `#`, or non-ASCII copy correctly. (Verified against
+  CouchDB 3.5: an unencoded `?` in the header is parsed as the rev
+  separator and errors; the encoded form round-trips.)
   """
   @spec copy(Client.t(), String.t(), String.t(), String.t(), keyword()) ::
           {:ok, map()} | {:error, term()}
@@ -102,10 +111,13 @@ defmodule Akaw.Document do
       when is_binary(db) and is_binary(src_id) and is_binary(destination) do
     {dest_rev, opts} = Keyword.pop(opts, :destination_rev)
 
+    # The literal `?rev=` separator must stay unencoded — it's how
+    # CouchDB splits the id from the rev — while the id itself must not
+    # contain a bare `?`, or it gets split there instead.
     destination_value =
       case dest_rev do
-        nil -> destination
-        rev -> "#{destination}?rev=#{rev}"
+        nil -> Path.encode_id(destination)
+        rev -> "#{Path.encode_id(destination)}?rev=#{rev}"
       end
 
     Request.request(client, "COPY", path(db, src_id),

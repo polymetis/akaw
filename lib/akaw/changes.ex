@@ -32,7 +32,7 @@ defmodule Akaw.Changes do
   See <https://docs.couchdb.org/en/latest/api/database/changes.html>.
   """
 
-  alias Akaw.{Client, LineStream, Request, Streaming, Path}
+  alias Akaw.{Client, LineStream, Params, Request, Streaming, Path}
 
   @doc """
   `GET /{db}/_changes` — fetch changes.
@@ -47,7 +47,8 @@ defmodule Akaw.Changes do
     * `:feed` — `"normal"` (default) or `"longpoll"`
     * `:timeout`, `:heartbeat`
     * `:include_docs`, `:attachments`, `:att_encoding_info`, `:conflicts`
-    * `:filter`, `:doc_ids` (short lists), `:view`
+    * `:filter`, `:doc_ids` (short lists — pass the raw list, Akaw
+      JSON-encodes it for the URL), `:view`
     * `:style` — `"main_only"` (default) or `"all_docs"`
     * `:seq_interval`
 
@@ -276,7 +277,11 @@ defmodule Akaw.Changes do
     {req_opts, params_opts}
   end
 
-  defp continuous_params(opts), do: Keyword.put(opts, :feed, "continuous")
+  defp continuous_params(opts) do
+    opts
+    |> Keyword.put(:feed, "continuous")
+    |> Params.encode_changes_keys()
+  end
 
   # The lazy streams force feed=continuous, so they always get the
   # held-open receive-timeout defaulting — the mailbox idle_timeout in
@@ -287,7 +292,10 @@ defmodule Akaw.Changes do
     {Streaming.default_receive_timeout(client, req_opts, params), params}
   end
 
-  defp split_feed_opts(client, opts), do: Streaming.held_open_feed_opts(client, opts)
+  defp split_feed_opts(client, opts) do
+    {req_opts, params} = Streaming.held_open_feed_opts(client, opts)
+    {req_opts, Params.encode_changes_keys(params)}
+  end
 
   defp reject_feed_override!(opts) do
     if Keyword.has_key?(opts, :feed) do

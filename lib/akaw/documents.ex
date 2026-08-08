@@ -219,7 +219,8 @@ defmodule Akaw.Documents do
 
   ## Options (query params)
 
-    * `:revs`, `:attachments`, `:atts_since`, `:latest`
+    * `:revs`, `:attachments`, `:atts_since` (a list of revs,
+      JSON-encoded for you), `:latest`
   """
   @spec bulk_get(Client.t(), String.t(), [map()], keyword()) ::
           {:ok, map()} | {:error, term()}
@@ -227,7 +228,7 @@ defmodule Akaw.Documents do
       when is_binary(db) and is_list(refs) do
     Request.request(client, :post, "/#{Path.encode(db)}/_bulk_get",
       json: %{docs: refs},
-      params: opts
+      params: Params.encode_doc_keys(opts)
     )
   end
 
