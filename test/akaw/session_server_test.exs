@@ -294,6 +294,53 @@ defmodule Akaw.SessionServerTest do
     assert :counters.get(counter, 1) == 2_000_002
   end
 
+  test "a password_fn that raises at refresh time is a failed refresh, not a crash" do
+    # The moduledoc sells password_fn for deferred secret lookup (Vault,
+    # K8s reloader). If the secret store hiccups at refresh time, the
+    # documented path is "existing client stays in place, retry on
+    # backoff" — a crash here would loop through the supervisor, whose
+    # restarts re-run the same raising function in init until the whole
+    # tree gives up.
+    calls = :counters.new(1, [])
+    {plug, _} = counting_session_plug()
+
+    pid =
+      start_server(plug,
+        password: fn ->
+          :counters.add(calls, 1, 1)
+          if :counters.get(calls, 1) == 1, do: "pw", else: raise("vault is down")
+        end
+      )
+
+    assert {:error, %Akaw.Error{error: "refresh_exception", reason: "vault is down"}} =
+             Akaw.SessionServer.refresh(pid)
+
+    assert Process.alive?(pid)
+    client = Akaw.SessionServer.client(pid)
+    assert {"cookie", "AuthSession=tok_1"} in client.headers
+  end
+
+  test "a password_fn that exits at refresh time is a failed refresh, not a crash" do
+    # A GenServer.call into a dead secret-store process exits rather than
+    # raises — the graceful path has to absorb both.
+    calls = :counters.new(1, [])
+    {plug, _} = counting_session_plug()
+
+    pid =
+      start_server(plug,
+        password: fn ->
+          :counters.add(calls, 1, 1)
+          if :counters.get(calls, 1) == 1, do: "pw", else: exit(:vault_timeout)
+        end
+      )
+
+    assert {:error, %Akaw.Error{error: "refresh_exception", reason: "exit: :vault_timeout"}} =
+             Akaw.SessionServer.refresh(pid)
+
+    assert Process.alive?(pid)
+    assert {"cookie", "AuthSession=tok_1"} in Akaw.SessionServer.client(pid).headers
+  end
+
   test "password isn't visible in :sys.get_state output" do
     {plug, _} = counting_session_plug()
     pid = start_server(plug, password: "super-secret-password")

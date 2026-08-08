@@ -87,6 +87,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A `password_fn` that raises or exits during a scheduled refresh no
+  longer crash-loops `Akaw.SessionServer`.** The `:password` option is
+  documented for deferred secret lookup (Vault, K8s secret reloaders) —
+  but an exception at refresh time killed the GenServer, and the
+  supervisor's restart re-ran the same failing function in `init/1`,
+  looping until `max_restarts` took the tree down. A transient secret-store
+  blip now takes the documented graceful path instead: the existing client
+  stays in place, the `:error` telemetry event fires (with
+  `%Akaw.Error{error: "refresh_exception"}`), and the refresh retries on
+  the usual backoff. The initial lookup at start remains let-it-crash.
+
 - **Responses are compressed again.** Req 0.6.1 made decompression opt-in, so
   Akaw silently stopped negotiating gzip. Measured against CouchDB 3.5.1 on
   the same request: 129 bytes with gzip versus 17,600 without. This only

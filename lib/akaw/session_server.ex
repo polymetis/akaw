@@ -34,6 +34,10 @@ defmodule Akaw.SessionServer do
       dumps — the state shows `password_fn: #Function<...>`. Pass a
       function if you want to defer the secret lookup (Vault, K8s
       secret reloader, etc.) to refresh time rather than start time.
+      If the function raises or exits during a *refresh* (the secret
+      store hiccups), that's treated as a failed refresh — existing
+      client kept, retry on backoff — not a crash. Only the initial
+      lookup at start is let-it-crash.
     * `:refresh_interval` — milliseconds between refresh attempts
       (default 5 minutes). Keep this comfortably under CouchDB's
       `[chttpd_auth] timeout` (default 10 minutes): the `AuthSession`
@@ -78,7 +82,7 @@ defmodule Akaw.SessionServer do
   use GenServer
   require Logger
 
-  alias Akaw.Session
+  alias Akaw.{Error, Session}
 
   @default_interval :timer.minutes(5)
   @retry_backoff :timer.seconds(60)
@@ -168,7 +172,7 @@ defmodule Akaw.SessionServer do
     metadata = %{name: state.name}
     start = System.monotonic_time()
 
-    case Session.refresh(state.client, state.username, state.password_fn.()) do
+    case attempt_refresh(state) do
       {:ok, new_client, _body} ->
         :telemetry.execute(
           [:akaw, :session_server, :refresh, :ok],
@@ -192,6 +196,32 @@ defmodule Akaw.SessionServer do
 
         err
     end
+  end
+
+  # A raise or exit escaping `password_fn` (a Vault hiccup, a timed-out
+  # secret-store call) must not escape do_refresh: the moduledoc promises
+  # that after a successful login a failed refresh keeps the existing
+  # client and retries — and an escape here would crash-loop through the
+  # supervisor, whose restarts re-run the same raising function in init.
+  # Only init is let-it-crash.
+  defp attempt_refresh(state) do
+    Session.refresh(state.client, state.username, state.password_fn.())
+  rescue
+    exception ->
+      {:error,
+       %Error{
+         error: "refresh_exception",
+         reason: Exception.message(exception),
+         body: %{exception: exception}
+       }}
+  catch
+    kind, value ->
+      {:error,
+       %Error{
+         error: "refresh_exception",
+         reason: "#{kind}: #{inspect(value)}",
+         body: %{exception: {kind, value}}
+       }}
   end
 
   defp schedule_refresh(interval) do
