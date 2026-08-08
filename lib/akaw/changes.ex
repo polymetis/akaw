@@ -114,6 +114,13 @@ defmodule Akaw.Changes do
   change; bound it with `Stream.take/2`, `Stream.take_while/2`, or by
   killing the consuming process.
 
+  One non-change element can arrive: when CouchDB ends the feed itself
+  (e.g. the `:timeout` inactivity window closes with no heartbeat set,
+  or `:limit` is reached), the final line is a terminal
+  `%{"last_seq" => ..., "pending" => ...}` object, delivered like any
+  other element. It has no `"id"`/`"seq"`
+  keys — match on `change["id"]` if your consumer must ignore it.
+
   ## Options
 
   All `get/3` options are accepted. `:feed` is forced to `"continuous"`.
@@ -189,6 +196,9 @@ defmodule Akaw.Changes do
   One exception to the return-tuple contract: a feed line that fails to
   decode raises `%Akaw.Error{error: "stream_decode_error"}` out of the
   reducer loop, same as the lazy `stream/3`.
+
+  As with `stream/3`, a server-ended feed hands the reducer one terminal
+  `%{"last_seq" => ...}` object (no `"id"` key) as its final call.
 
   ## Idle timeout
 

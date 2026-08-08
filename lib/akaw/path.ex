@@ -10,7 +10,15 @@ defmodule Akaw.Path do
   # unreserved chars in db names) a single-line change rather than a
   # rewrite of 22 modules.
 
-  @doc "URL-encode a path segment using RFC 3986 unreserved-char predicate."
+  @doc """
+  URL-encode a path segment using RFC 3986 unreserved-char predicate.
+
+      iex> Akaw.Path.encode("my db")
+      "my%20db"
+
+      iex> Akaw.Path.encode("a/b?c")
+      "a%2Fb%3Fc"
+  """
   @spec encode(String.t()) :: String.t()
   def encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
 
@@ -18,6 +26,15 @@ defmodule Akaw.Path do
   URL-encode a document id, preserving the literal slash of `_design/`
   and `_local/` reserved prefixes. The suffix after the slash is still
   encoded so doc ids like `_design/with space` become `_design/with%20space`.
+
+      iex> Akaw.Path.encode_id("_design/with space")
+      "_design/with%20space"
+
+      iex> Akaw.Path.encode_id("_local/a/b")
+      "_local/a%2Fb"
+
+      iex> Akaw.Path.encode_id("plain/doc?id")
+      "plain%2Fdoc%3Fid"
   """
   @spec encode_id(String.t()) :: String.t()
   def encode_id("_design/" <> rest), do: "_design/" <> encode(rest)

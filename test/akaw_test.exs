@@ -4,6 +4,7 @@ defmodule AkawTest do
   doctest Akaw
   doctest Akaw.Error
   doctest Akaw.Params
+  doctest Akaw.Path
 
   describe "new/1" do
     test "builds a client with sensible defaults" do

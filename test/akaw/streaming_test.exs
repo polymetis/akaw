@@ -15,11 +15,16 @@ defmodule Akaw.StreamingTest do
       {:ok, socket} = :gen_tcp.accept(listen)
       _request = :gen_tcp.recv(socket, 0)
 
+      # Chunk size 0xc = 12 bytes, matching the payload exactly — the
+      # close lands *between* chunks, before the terminating zero-length
+      # chunk, which is what the comment above promises. (This used to
+      # declare 0x10 and send 12 bytes, closing mid-chunk instead — a
+      # different framing failure than the one described.)
       :gen_tcp.send(socket, [
         "HTTP/1.1 200 OK\r\n",
         "Content-Type: application/json\r\n",
         "Transfer-Encoding: chunked\r\n\r\n",
-        "10\r\n{\"seq\":\"1\"}\n\r\n"
+        "c\r\n{\"seq\":\"1\"}\n\r\n"
       ])
 
       :gen_tcp.shutdown(socket, :read_write)

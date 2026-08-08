@@ -31,11 +31,17 @@ defmodule Akaw.Client do
     req_options: []
   ]
 
+  @typedoc """
+  Authentication for every request this client makes: `nil` (no auth —
+  cookie-based sessions carry theirs in `:headers` instead),
+  HTTP basic, or a bearer token (CouchDB JWT auth).
+  """
   @type auth ::
           nil
           | {:basic, username :: String.t(), password :: String.t()}
           | {:bearer, token :: String.t()}
 
+  @typedoc "A configured CouchDB client. Build with `Akaw.new/1`."
   @type t :: %__MODULE__{
           base_url: String.t(),
           auth: auth(),

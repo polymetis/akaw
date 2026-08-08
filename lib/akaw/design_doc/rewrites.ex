@@ -24,6 +24,18 @@ defmodule Akaw.DesignDoc.Rewrites do
   **not** URL-encoded, since rewrite paths often contain literal `/`,
   query strings, and other path components that the rules match on.
 
+  > #### Verbatim means verbatim {: .warning}
+  >
+  > Because nothing is encoded, `path` is the one place in Akaw where a
+  > caller-supplied string can reshape the request URL — `../`
+  > segments, `?`, and `#` all reach the wire as-is. Never build it
+  > from untrusted input; if a user-supplied fragment must appear in a
+  > rewrite path, percent-encode that fragment yourself —
+  > `URI.encode(fragment, &URI.char_unreserved?/1)`, the same predicate
+  > Akaw uses for path segments — before splicing it in. (Not
+  > `URI.encode_www_form/1`: form encoding turns spaces into `+`,
+  > which stays a literal `+` in path context.)
+
   ## Options
 
     * `:method` — `:get` (default), any other HTTP verb atom (`:post`,

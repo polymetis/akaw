@@ -119,7 +119,10 @@ defmodule Akaw do
         * `:retry` — Req's retry policy; streaming paths default it
           off (see the retry note below)
 
-      Anything else flows through to the endpoint as a query param.
+      Anything else flows through to the endpoint as a query param —
+      except on the Mango `reduce_while` variants, where the query
+      lives in the POSTed body and non-transport opts are ignored
+      (see `Akaw.Find.reduce_while/6`).
       For held-open feeds (longpoll/continuous/eventsource), `:receive_timeout`
       auto-defaults to cover CouchDB's legitimate quiet window —
       `heartbeat * 2` for an integer `:heartbeat`, 120s for a
