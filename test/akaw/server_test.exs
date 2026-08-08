@@ -80,6 +80,23 @@ defmodule Akaw.ServerTest do
     assert qs =~ "since=now"
   end
 
+  test "db_updates/2 routes transport opts to the transport, not the query string", %{
+    client: client
+  } do
+    # Sibling of Changes.get/3's held-open treatment: a quiet longpoll
+    # _db_updates must not die at the transport's 15s default, and a
+    # caller's :receive_timeout must reach Finch, not CouchDB.
+    assert {:ok, _} =
+             Akaw.Server.db_updates(client,
+               feed: "longpoll",
+               receive_timeout: 90_000,
+               pool_timeout: 500
+             )
+
+    assert_receive %{path: "/_db_updates", query_string: qs}
+    assert qs == "feed=longpoll"
+  end
+
   test "membership/1 → GET /_membership", %{client: client} do
     assert {:ok, _} = Akaw.Server.membership(client)
     assert_receive %{method: "GET", path: "/_membership"}

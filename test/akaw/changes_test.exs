@@ -55,6 +55,34 @@ defmodule Akaw.ChangesTest do
     end
   end
 
+  describe "stream/3 transport opts" do
+    test "routes transport opts out of the query string" do
+      # The lazy continuous stream gets the same held-open
+      # receive-timeout defaulting as the reduce paths; a caller's
+      # :receive_timeout must reach the transport, not CouchDB.
+      #
+      # Process.put, not send: the lazy stream's unselective receive
+      # drains the test process's own mailbox during consumption — a
+      # message-based probe gets eaten by the very footgun the
+      # reduce_while docs warn about.
+      plug = fn conn ->
+        Process.put(:akaw_stream_opts_qs, conn.query_string)
+        Req.Test.json(conn, %{})
+      end
+
+      client = Akaw.new(base_url: "http://x", req_options: [plug: plug])
+
+      client
+      |> Akaw.Changes.stream("mydb", since: "now", receive_timeout: 90_000)
+      |> Enum.take(1)
+
+      qs = Process.get(:akaw_stream_opts_qs) || ""
+      assert qs =~ "since=now"
+      assert qs =~ "feed=continuous"
+      refute qs =~ "receive_timeout"
+    end
+  end
+
   describe "post/4" do
     test "POSTs body with doc_ids filter", %{client: client} do
       assert {:ok, _} =

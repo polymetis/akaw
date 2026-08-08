@@ -108,13 +108,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   abandoned server-side connections to do it). Held-open feeds now
   default `:receive_timeout` to cover the server's window: `heartbeat * 2`
   for an integer heartbeat, 120s for a server-picked one, otherwise
-  `:timeout` + 5s slack. This applies to `get/3`/`post/4` with
-  longpoll/continuous/eventsource feeds and to the `reduce_while`
-  continuous wrappers (which previously only derived from `:heartbeat`).
-  `get/3` and `post/4` also now route `:receive_timeout` /
-  `:pool_timeout` / `:connect_options` to the transport instead of the
-  query string, matching the `reduce_while` variants. An explicit
-  `:receive_timeout` always wins.
+  `:timeout` + 5s slack. This applies to every held-open entry point:
+  `Akaw.Changes.get/3`/`post/4` with longpoll/continuous/eventsource
+  feeds, the lazy `Changes.stream/3`/`stream_post/4`,
+  `Akaw.Server.db_updates/2`/`stream_db_updates/2`, and the
+  `reduce_while` continuous wrappers (which previously only derived from
+  `:heartbeat`). The non-reduce entry points also now route
+  `:receive_timeout` / `:pool_timeout` / `:connect_options` to the
+  transport instead of the query string. An explicit `:receive_timeout`
+  always wins — per call or per client `req_options`.
+
+  Note on `_db_updates`: CouchDB's documentation describes its
+  `:timeout` in seconds, but the implementation (verified empirically
+  against CouchDB 3.5) takes milliseconds, same as `_changes` — a quiet
+  `_db_updates` longpoll answers at the same 60s default window.
 
 - **A fully minified response now raises the promised
   `stream_format_error` instead of silently streaming zero items.** The

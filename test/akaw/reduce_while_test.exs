@@ -616,6 +616,27 @@ defmodule Akaw.ReduceWhileTest do
       assert Keyword.get(req, :receive_timeout) == 9_999
     end
 
+    test "held_open_feed_opts/2 derives only for held-open feeds" do
+      # feed "normal" (or absent) answers immediately — the transport
+      # default is fine there and must not be touched.
+      {req_normal, _} = Akaw.Streaming.held_open_feed_opts(bare_client(), since: "now")
+      refute Keyword.has_key?(req_normal, :receive_timeout)
+
+      {req_longpoll, params} =
+        Akaw.Streaming.held_open_feed_opts(bare_client(), feed: "longpoll", timeout: 30_000)
+
+      assert Keyword.get(req_longpoll, :receive_timeout) == 35_000
+      assert Keyword.get(params, :feed) == "longpoll"
+
+      {req_explicit, _} =
+        Akaw.Streaming.held_open_feed_opts(bare_client(),
+          feed: "longpoll",
+          receive_timeout: 9_999
+        )
+
+      assert Keyword.get(req_explicit, :receive_timeout) == 9_999
+    end
+
     test "default_receive_timeout/3 stands down for a client-level receive_timeout" do
       # Per-call opts merge after client req_options in Request.build/4,
       # so a derived value placed per-call would silently override the

@@ -146,9 +146,9 @@ defmodule Akaw.Changes do
   """
   @spec stream(Client.t(), String.t(), keyword()) :: Enumerable.t(map())
   def stream(%Client{} = client, db, opts \\ []) when is_binary(db) do
-    Streaming.chunks(client, :get, "/#{Path.encode(db)}/_changes",
-      params: continuous_params(opts)
-    )
+    {req_opts, params} = continuous_stream_opts(client, opts)
+
+    Streaming.chunks(client, :get, "/#{Path.encode(db)}/_changes", [params: params] ++ req_opts)
     |> LineStream.lines()
     |> Stream.map(&JSON.decode!/1)
   end
@@ -160,9 +160,13 @@ defmodule Akaw.Changes do
   @spec stream_post(Client.t(), String.t(), map(), keyword()) :: Enumerable.t(map())
   def stream_post(%Client{} = client, db, body, opts \\ [])
       when is_binary(db) and is_map(body) do
-    Streaming.chunks(client, :post, "/#{Path.encode(db)}/_changes",
-      params: continuous_params(opts),
-      json: body
+    {req_opts, params} = continuous_stream_opts(client, opts)
+
+    Streaming.chunks(
+      client,
+      :post,
+      "/#{Path.encode(db)}/_changes",
+      [params: params, json: body] ++ req_opts
     )
     |> LineStream.lines()
     |> Stream.map(&JSON.decode!/1)
@@ -268,20 +272,16 @@ defmodule Akaw.Changes do
 
   defp continuous_params(opts), do: Keyword.put(opts, :feed, "continuous")
 
-  # Feeds where CouchDB may legitimately hold the connection open past
-  # the transport's default receive timeout. "normal" answers
-  # immediately, so it keeps the transport default.
-  @held_open_feeds ["longpoll", "continuous", "eventsource"]
-
-  defp split_feed_opts(client, opts) do
-    {req_opts, params} = Streaming.split_req_opts(opts)
-
-    if to_string(Keyword.get(params, :feed, "normal")) in @held_open_feeds do
-      {Streaming.default_receive_timeout(client, req_opts, params), params}
-    else
-      {req_opts, params}
-    end
+  # The lazy streams force feed=continuous, so they always get the
+  # held-open receive-timeout defaulting — the mailbox idle_timeout in
+  # Streaming.chunks/4 is a separate, later line of defense.
+  defp continuous_stream_opts(client, opts) do
+    {req_opts, couchdb_opts} = Streaming.split_req_opts(opts)
+    params = continuous_params(couchdb_opts)
+    {Streaming.default_receive_timeout(client, req_opts, params), params}
   end
+
+  defp split_feed_opts(client, opts), do: Streaming.held_open_feed_opts(client, opts)
 
   defp reject_feed_override!(opts) do
     if Keyword.has_key?(opts, :feed) do

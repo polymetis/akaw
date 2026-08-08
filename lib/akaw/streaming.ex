@@ -331,6 +331,32 @@ defmodule Akaw.Streaming do
     end
   end
 
+  # Feeds where CouchDB may legitimately hold the connection open past
+  # the transport's default receive timeout. "normal" answers
+  # immediately, so it keeps the transport default.
+  @held_open_feeds ["longpoll", "continuous", "eventsource"]
+
+  @doc """
+  Split `opts` into `{req_opts, params}` and, when `params` names a
+  held-open feed (longpoll/continuous/eventsource), default
+  `:receive_timeout` via `default_receive_timeout/3`.
+
+  Shared by every endpoint that accepts a `:feed` option
+  (`Akaw.Changes.get/3`/`post/4`, `Akaw.Server.db_updates/2`), so a
+  quiet held-open feed can't be killed by the transport's default
+  before the server's own answer window elapses.
+  """
+  @spec held_open_feed_opts(Client.t(), keyword()) :: {keyword(), keyword()}
+  def held_open_feed_opts(%Client{} = client, opts) do
+    {req_opts, params} = split_req_opts(opts)
+
+    if to_string(Keyword.get(params, :feed, "normal")) in @held_open_feeds do
+      {default_receive_timeout(client, req_opts, params), params}
+    else
+      {req_opts, params}
+    end
+  end
+
   @doc """
   Reduce over raw binary chunks of the response body. Returns
   `{:ok, final_acc}` on completion (including early `:halt`), or
