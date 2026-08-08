@@ -50,15 +50,25 @@ defmodule Akaw.Integration.ReplicationTest do
       end
     end)
 
-    # Wait for the doc to land in target. On failure, say *why* — the
-    # replicator resolves `source`/`target` server-side, so "the doc never
-    # arrived" has two very different causes: the URL is not reachable from
-    # where CouchDB runs, or the job simply has not been scheduled yet.
-    # `_scheduler/docs` distinguishes them.
-    assert :ok == wait_for_doc(client, target, "doc1", 30_000),
-           "replication never delivered doc1.\n" <>
-             "  scheduler: #{inspect(replication_state(client, repl_id))}\n" <>
-             "  source/target URL given to CouchDB: #{build_authed_url(client, source)}"
+    # Wait on the *job*, not on the clock.
+    #
+    # A `_replicator` doc is a request, not an action: CouchDB's scheduler
+    # picks it up whenever it gets to it, and on a cold node that latency is
+    # wildly variable. Measured against an idle local container: 1.0s, 4.4s,
+    # 4.6s, 4.7s, 5.2s, 5.7s, 5.9s, 7.9s — and then 34.3s and 34.4s. CI hit
+    # that tail and failed a 30s deadline with the job in state "running",
+    # error_count 0, i.e. perfectly healthy and just not finished.
+    #
+    # (The ~34s cluster looks like the replicator's 30s default
+    # `connection_timeout` being hit once and retried, rather than steady
+    # slowness — but the fix does not depend on that being the cause.)
+    #
+    # So any fixed wall-clock number is the wrong instrument: short enough to
+    # keep the suite quick is short enough to flake, and long enough to be
+    # safe makes a genuinely broken replication take minutes to report. Poll
+    # the job's own state instead — that distinguishes "slow" from "broken",
+    # which is the distinction the test actually cares about.
+    assert :ok = await_replication(client, repl_id, target, "doc1")
 
     # Status should be reachable
     assert {:ok, %{"doc_id" => ^repl_id}} = Akaw.Replication.status(client, repl_id)
@@ -77,30 +87,64 @@ defmodule Akaw.Integration.ReplicationTest do
     "#{uri.scheme}://#{user}:#{pass}@#{uri.host}:#{uri.port}/#{db}"
   end
 
+  # Poll until the replicated doc shows up, giving up early if the
+  # replicator reports the job unhealthy rather than merely unfinished.
+  # The generous ceiling is a backstop for a stuck job, not an expected
+  # wait — the happy path normally returns in a few seconds.
+  @replication_ceiling_ms 120_000
+  @replication_poll_ms 200
+
+  defp await_replication(client, repl_id, target_db, doc_id) do
+    deadline = System.monotonic_time(:millisecond) + @replication_ceiling_ms
+    poll_replication(client, repl_id, target_db, doc_id, deadline)
+  end
+
+  defp poll_replication(client, repl_id, target_db, doc_id, deadline) do
+    cond do
+      match?({:ok, _}, Akaw.Document.get(client, target_db, doc_id)) ->
+        :ok
+
+      unhealthy = replication_failure(client, repl_id) ->
+        flunk("""
+        replication job is not healthy, so #{doc_id} is never arriving:
+          #{inspect(unhealthy)}
+          source/target URL given to CouchDB: #{build_authed_url(client, target_db)}
+        """)
+
+      System.monotonic_time(:millisecond) > deadline ->
+        flunk("""
+        replication did not deliver #{doc_id} within #{@replication_ceiling_ms}ms.
+          scheduler: #{inspect(replication_state(client, repl_id))}
+          source/target URL given to CouchDB: #{build_authed_url(client, target_db)}
+        """)
+
+      true ->
+        Process.sleep(@replication_poll_ms)
+        poll_replication(client, repl_id, target_db, doc_id, deadline)
+    end
+  end
+
+  # `crashing` / `failed` mean CouchDB has given up or is backing off, and
+  # a climbing error_count means it is retrying against something broken —
+  # an unreachable source/target reads exactly like this. Anything else
+  # ("initializing", "pending", "running", "completed") is just progress.
+  defp replication_failure(client, repl_id) do
+    case Akaw.Replication.status(client, repl_id) do
+      {:ok, %{"state" => state} = doc} when state in ["crashing", "failed", "error"] ->
+        Map.take(doc, ["state", "error_count", "info"])
+
+      {:ok, %{"error_count" => count} = doc} when is_integer(count) and count > 0 ->
+        Map.take(doc, ["state", "error_count", "info"])
+
+      _ ->
+        nil
+    end
+  end
+
   defp replication_state(client, repl_id) do
     case Akaw.Replication.status(client, repl_id) do
       {:ok, doc} -> Map.take(doc, ["state", "error_count", "info", "last_updated"])
       other -> other
-    end
-  end
-
-  defp wait_for_doc(client, db, id, timeout_ms) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    poll_for_doc(client, db, id, deadline)
-  end
-
-  defp poll_for_doc(client, db, id, deadline) do
-    case Akaw.Document.get(client, db, id) do
-      {:ok, _} ->
-        :ok
-
-      _ ->
-        if System.monotonic_time(:millisecond) > deadline do
-          {:error, :timeout}
-        else
-          Process.sleep(200)
-          poll_for_doc(client, db, id, deadline)
-        end
     end
   end
 end
