@@ -98,6 +98,39 @@ defmodule Akaw.RequestTest do
       assert Exception.message(err) =~ "missing"
     end
 
+    test "requests negotiate compression and decode a gzipped response body" do
+      test = self()
+
+      plug = fn conn ->
+        send(test, {:accept_encoding, Plug.Conn.get_req_header(conn, "accept-encoding")})
+
+        conn
+        |> Plug.Conn.put_resp_header("content-encoding", "gzip")
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, :zlib.gzip(~s({"ok":true})))
+      end
+
+      assert {:ok, %{"ok" => true}} = Request.request(client_with(plug), :get, "/")
+
+      # Req 0.6.1 made this opt-in; Akaw.Request opts back in, so CouchDB
+      # still gets asked for gzip and the body still arrives decoded rather
+      # than as a raw compressed binary.
+      assert_receive {:accept_encoding, [encodings]}
+      assert encodings =~ "gzip"
+    end
+
+    test "a caller can still turn compression off per call" do
+      test = self()
+
+      plug = fn conn ->
+        send(test, {:accept_encoding, Plug.Conn.get_req_header(conn, "accept-encoding")})
+        Req.Test.json(conn, %{})
+      end
+
+      assert {:ok, _} = Request.request(client_with(plug), :get, "/", compressed: false)
+      assert_receive {:accept_encoding, []}
+    end
+
     test "transport exceptions are wrapped into %Akaw.Error{status: nil}" do
       plug = fn conn -> Req.Test.transport_error(conn, :econnrefused) end
       client = client_with(plug)

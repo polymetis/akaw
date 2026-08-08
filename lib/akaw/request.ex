@@ -61,7 +61,18 @@ defmodule Akaw.Request do
     [
       method: method,
       url: client.base_url <> path,
-      headers: headers
+      headers: headers,
+      # Req 0.6.1 made decompression opt-in, so without this akaw stopped
+      # negotiating gzip and started pulling attachments uncompressed —
+      # measured at 38x more bytes on the wire for a text/plain attachment
+      # against CouchDB 3.5.1. Req's reason for the new default is
+      # decompression-bomb DoS from arbitrary internet endpoints; akaw
+      # only ever talks to the CouchDB you pointed it at, so opting back
+      # in is the right default here. Please don't "fix" this back.
+      #
+      # It rides in the base list (not after the merges) so a caller can
+      # still override it per-client or per-call with `compressed: false`.
+      compressed: true
     ]
     |> apply_auth(client.auth)
     |> apply_finch(client.finch)
