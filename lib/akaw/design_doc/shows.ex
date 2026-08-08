@@ -31,8 +31,9 @@ defmodule Akaw.DesignDoc.Shows do
     * `:doc_id` — invoke the show against a specific document
       (`_show/{func}/{docid}`) rather than `_show/{func}`
     * `:method` — `:get` (default) or `:post`
-    * `:body` — request body (only meaningful for `:post`; passing one with
-      `method: :get` raises `ArgumentError`)
+    * `:body` — request body (only meaningful for `:post`; a body on
+      `:get` is sent verbatim — CouchDB accepts it, but show functions
+      won't read it)
     * `:params` — query-string parameters forwarded verbatim
   """
   @spec call(Client.t(), String.t(), String.t(), String.t(), keyword()) ::

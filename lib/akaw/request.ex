@@ -1,16 +1,21 @@
 defmodule Akaw.Request do
   @moduledoc false
 
+  require Logger
+
   alias Akaw.{Client, Error, Response}
 
   # Standard HTTP method atoms accepted by Finch, plus a binary escape hatch
-  # for non-standard verbs like "COPY" (CouchDB document copy).
+  # for non-standard verbs like "COPY" (CouchDB document copy). Both
+  # spellings go to the wire verbatim — akaw never rewrites a verb.
   @type method ::
           :get | :post | :put | :delete | :head | :patch | :options | String.t()
   @type return_kind :: :body | :response
 
+  @user_agent "akaw/#{Mix.Project.config()[:version]}"
+
   @doc """
-  Issue an HTTP request via Req.
+  Issue an HTTP request via Finch.
 
   ## Internal options
 
@@ -24,133 +29,167 @@ defmodule Akaw.Request do
   appears more than once, the later occurrence wins (per-call beats
   req_options beats client).
 
-  Any other options are forwarded to `Req.new/1`.
+  Every other accepted option is named in `prepared/4`; an unknown key
+  raises `ArgumentError` — this layer is a closed surface, not a
+  passthrough.
+
+  ## Retry: the pooled keep-alive race, once, loudly
+
+  A pooled connection can be closed by the server between checkout and
+  write — CouchDB's own keep-alive timeout guarantees this race occurs in
+  normal operation. For idempotent methods (GET/HEAD) that failure
+  (`%Mint.TransportError{reason: :closed}`) is retried exactly once, and
+  every retry logs at `:warning` so the policy is observable rather than
+  silent. Nothing else is retried: not other transport errors (a refused
+  connect fails the same way twice), not 5xx statuses (surface them —
+  the full status-classification port is a pre-Hex item, deliberately
+  deferred). `retry: false` (per call or per client) disables even that;
+  the streaming and held-open feed paths have no retry code path at all.
   """
   @spec request(Client.t(), method(), String.t(), keyword()) ::
-          {:ok, term()} | {:ok, Response.t()} | {:error, Error.t() | Exception.t()}
+          {:ok, term()} | {:ok, Response.t()} | {:error, Error.t()}
   def request(%Client{} = client, method, path, opts \\ []) do
     {return_kind, opts} = Keyword.pop(opts, :return, :body)
+    {finch_request, pool, finch_opts, retry?} = prepared(client, method, path, opts)
 
-    client
-    |> build(method, path, opts)
-    |> Req.request()
-    |> handle_response(return_kind)
+    finch_request
+    |> run_with_retry(pool, finch_opts, retry?)
+    |> handle_response(return_kind, finch_request.method)
   end
 
   @doc """
-  Like `request/4` but returns the raw `Req.request/1` result without
-  wrapping non-2xx into `%Akaw.Error{}`.
+  Build the `%Finch.Request{}` plus everything needed to run it:
+  `{finch_request, pool_name, finch_opts, retry?}`.
 
-  Used by `Akaw.Changes` for streaming opens, where the response body may
-  be a `%Req.Response.Async{}` that needs special handling and the caller
-  wants direct access to the response struct on every status.
+  Shared with `Akaw.Streaming`, which runs the request through
+  `Finch.stream_while/5` / `Finch.async_request/3` instead of
+  `Finch.request/3` (and ignores `retry?` — streaming paths have no
+  retry plumbing by design).
   """
-  @spec request_raw(Client.t(), method(), String.t(), keyword()) ::
-          {:ok, Req.Response.t()} | {:error, Exception.t()}
-  def request_raw(%Client{} = client, method, path, opts \\ []) do
-    client
-    |> build(method, path, opts)
-    |> Req.request()
-  end
-
-  defp build(client, method, path, opts) do
+  @spec prepared(Client.t(), method(), String.t(), keyword()) ::
+          {Finch.Request.t(), module() | atom(), keyword(), boolean()}
+  def prepared(%Client{} = client, method, path, opts) do
     {req_opt_headers, req_options} = Keyword.pop(client.req_options, :headers, [])
     {call_headers, opts} = Keyword.pop(opts, :headers, [])
     headers = combine_headers([client.headers, req_opt_headers, call_headers])
 
-    [
-      method: method,
-      url: client.base_url <> path,
-      headers: headers,
-      # Req 0.6.1 made decompression opt-in, so without this akaw stopped
-      # negotiating gzip and started pulling attachments uncompressed —
-      # measured at 38x more bytes on the wire for a text/plain attachment
-      # against CouchDB 3.5.1. Req's reason for the new default is
-      # decompression-bomb DoS from arbitrary internet endpoints; akaw
-      # only ever talks to the CouchDB you pointed it at, so opting back
-      # in is the right default here. Please don't "fix" this back.
-      #
-      # It rides in the base list (not after the merges) so a caller can
-      # still override it per-client or per-call with `compressed: false`.
-      compressed: true,
-      # Response JSON decodes with the OTP-native JSON module, not Req's
-      # Jason default — one parser in the app, one error struct, and the
-      # faster one on CouchDB-shaped payloads (measured 1.17-1.99x).
-      # Note this REPLACES Req's default [:json, :json_api] decoder
-      # pair: application/vnd.api+json (reachable only via an attachment
-      # stored with that type) now comes back as raw bytes.
-      decoders: [json: &decode_json_native/1]
-    ]
-    |> apply_auth(client.auth)
-    |> apply_finch(client.finch)
-    |> Keyword.merge(req_options)
-    |> Keyword.merge(opts)
-    |> check_body_method!()
-    |> encode_json_body()
-    |> normalize_finch()
-    |> Req.new()
+    merged = req_options |> Keyword.merge(opts)
+
+    {params, merged} = Keyword.pop(merged, :params, [])
+    {json, merged} = Keyword.pop(merged, :json)
+    {body, merged} = Keyword.pop(merged, :body)
+    {compressed, merged} = Keyword.pop(merged, :compressed, true)
+    {receive_timeout, merged} = Keyword.pop(merged, :receive_timeout)
+    {pool_timeout, merged} = Keyword.pop(merged, :pool_timeout)
+    {retry, merged} = Keyword.pop(merged, :retry, :safe_transient)
+
+    reject_unknown_options!(merged)
+
+    {body, headers} = encode_json_body(json, body, headers)
+
+    headers =
+      headers
+      |> apply_auth(client.auth)
+      |> apply_compressed(compressed)
+      |> put_new_header("user-agent", @user_agent)
+
+    {pool, build_options} = pool_and_build_options(client.finch)
+
+    finch_request =
+      Finch.build(method, client.base_url <> path <> query_suffix(params), headers, body,
+        build_options
+      )
+
+    finch_opts =
+      Enum.reject(
+        [receive_timeout: receive_timeout, pool_timeout: pool_timeout],
+        fn {_key, value} -> is_nil(value) end
+      )
+
+    {finch_request, pool, finch_opts, retry != false}
   end
 
-  # Req 0.7 moved the Finch knobs behind a `finch: [...]` keyword and
-  # deprecated the flat spellings, emitting an IO.warn *per request* —
-  # measured at ~0.3ms each, which roughly doubled akaw's client-side
-  # per-request cost for anyone using a named pool.
-  #
-  # akaw keeps its friendly flat public API (`Akaw.new(finch: MyApp.Finch)`,
-  # `pool_timeout: 5_000`) and translates here instead. It runs last,
-  # after the req_options and per-call merges, so the folded result is
-  # what actually reaches Req. (`req_options: [finch: ...]` itself now
-  # raises at Akaw.new/1 — the allowlist closed that spelling.)
-  #
-  # `:receive_timeout` is NOT deprecated and stays flat — don't
-  # "helpfully" fold it in too.
-  defp normalize_finch(opts) do
-    opts
-    |> normalize_finch_name()
-    |> fold_finch_request_opts()
+  # The closed option surface. Anything else is a bug at the endpoint
+  # layer (or a Req-era option that no longer exists) — raise with the
+  # inventory rather than silently dropping it.
+  @known_options [
+    :params,
+    :json,
+    :body,
+    :headers,
+    :compressed,
+    :receive_timeout,
+    :pool_timeout,
+    :retry,
+    :return
+  ]
+
+  defp reject_unknown_options!([]), do: :ok
+
+  defp reject_unknown_options!(unknown) do
+    raise ArgumentError, """
+    unknown request option(s): #{inspect(Keyword.keys(unknown))}
+
+    Akaw.Request accepts exactly #{inspect(@known_options)} — it is a \
+    closed surface over the HTTP client, not a passthrough.\
+    """
   end
 
-  defp normalize_finch_name(opts) do
-    case Keyword.get(opts, :finch) do
-      nil -> opts
-      name when is_atom(name) -> Keyword.put(opts, :finch, name: name)
-      _already_keyword -> opts
-    end
+  # ---------------------------------------------------------------------
+  # Request building
+  # ---------------------------------------------------------------------
+
+  # One value per key, later occurrence winning — the same semantics
+  # Req 0.7 applied (and Akaw's CHANGELOG documented), now implemented
+  # here. Spaces encode as `+` (www-form), which CouchDB decodes.
+  defp query_suffix([]), do: ""
+
+  defp query_suffix(params) do
+    encoded =
+      params
+      |> Enum.reduce([], fn {name, value}, deduped ->
+        name = to_string(name)
+        List.keystore(deduped, name, 0, {name, value})
+      end)
+      |> URI.encode_query()
+
+    "?" <> encoded
   end
 
-  # `:pool_timeout` belongs inside `finch: [...]` now. (The old
-  # leave-it-flat-alongside-:connect_options corner is gone with
-  # :connect_options itself — connection options live on a named Finch
-  # pool since the Phase 0 contract narrowing.)
-  defp fold_finch_request_opts(opts) do
-    case Keyword.split(opts, [:pool_timeout]) do
-      {[], _} -> opts
-      {flat, rest} -> Keyword.update(rest, :finch, flat, &Keyword.merge(&1, flat))
-    end
+  # Bodies are encoded with the OTP-native JSON module. Mirrors the
+  # header behavior of the Req era (content-type/accept are set only if
+  # the caller didn't set them) so the wire shape is unchanged.
+  defp encode_json_body(nil, body, headers), do: {body, headers}
+
+  defp encode_json_body(json, _body, headers) do
+    headers =
+      headers
+      |> put_new_header("content-type", "application/json")
+      |> put_new_header("accept", "application/json")
+
+    {JSON.encode_to_iodata!(json), headers}
   end
 
-  # Bodies are encoded by akaw with the OTP-native JSON module rather
-  # than by Req's encode_body step (which hard-codes Jason). Runs after
-  # check_body_method! so the GET+body guard still names the :json
-  # spelling the caller used, and mirrors Req's own header behavior:
-  # content-type/accept are set only if the caller didn't set them.
-  defp encode_json_body(opts) do
-    case Keyword.pop(opts, :json) do
-      {nil, opts} ->
-        opts
+  defp apply_auth(headers, nil), do: headers
 
-      {data, opts} ->
-        headers =
-          opts
-          |> Keyword.get(:headers, [])
-          |> put_new_header("content-type", "application/json")
-          |> put_new_header("accept", "application/json")
+  # put_new, not put: headers follow "later occurrence wins", and an
+  # explicit authorization header (per call or per client) is more
+  # specific than the client-level :auth credential.
+  defp apply_auth(headers, {:basic, user, pass}),
+    do: put_new_header(headers, "authorization", "Basic " <> Base.encode64("#{user}:#{pass}"))
 
-        opts
-        |> Keyword.put(:body, JSON.encode_to_iodata!(data))
-        |> Keyword.put(:headers, headers)
-    end
-  end
+  defp apply_auth(headers, {:bearer, token}),
+    do: put_new_header(headers, "authorization", "Bearer #{token}")
+
+  # Ask for gzip by default: CouchDB compresses JSON bodies and text
+  # attachments when allowed — measured at 38x fewer bytes on the wire
+  # for a text attachment. The decompression-bomb rationale for
+  # defaulting this off in general-purpose clients doesn't apply: akaw
+  # only ever talks to the CouchDB you pointed it at. `compressed:
+  # false` (per call or per client) opts out; streaming paths pin it
+  # off unconditionally (chunk parsers must never see gzip bytes).
+  defp apply_compressed(headers, false), do: headers
+  defp apply_compressed(headers, _), do: put_new_header(headers, "accept-encoding", "gzip")
 
   defp put_new_header(headers, name, value) do
     if Enum.any?(headers, fn {header_name, _} -> String.downcase(header_name) == name end) do
@@ -158,55 +197,6 @@ defmodule Akaw.Request do
     else
       headers ++ [{name, value}]
     end
-  end
-
-  # The wrapper is load-bearing: bare JSON.decode/1 returns an {:error,
-  # tuple}, which Req's run_decoder wraps in a generic %RuntimeError{} —
-  # and a corrupt 200 body would then misclassify as a transport error,
-  # the exact retry-forever hazard classify_error exists to prevent.
-  # Rescuing decode!/1 hands Req a real exception struct instead.
-  defp decode_json_native(body) do
-    {:ok, JSON.decode!(body)}
-  rescue
-    exception in JSON.DecodeError -> {:error, exception}
-  end
-
-  # Req option keys that end up setting `%Req.Request{}.body`.
-  @body_opts [:json, :body, :form, :form_multipart]
-
-  # Req 0.7's `encode_body` step silently rewrites a GET carrying a body
-  # into a POST. For a CouchDB client that is never the right answer: a
-  # `_rewrite` rule pinned to `"method": "GET"` stops matching and 404s,
-  # and a `_show`/`_list` function branching on `req.method` quietly
-  # takes the other branch without erroring at all.
-  #
-  # So akaw decides its own verb rather than inheriting Req's. Every
-  # akaw-internal body-bearing call already pins an explicit `:post` or
-  # `:put`; the only way to reach this is a caller passing `method: :get`
-  # to `DesignDoc.Shows/Lists/Rewrites/Updates`, which the first three
-  # already document as "only meaningful for `:post`".
-  defp check_body_method!(opts) do
-    if Keyword.get(opts, :method) == :get do
-      case Enum.find(@body_opts, &(Keyword.get(opts, &1) != nil)) do
-        nil -> opts
-        key -> raise ArgumentError, body_method_message(key)
-      end
-    else
-      opts
-    end
-  end
-
-  defp body_method_message(key) do
-    """
-    cannot send a request body with `method: :get` — Req would silently \
-    rewrite the request to POST, changing which CouchDB handler runs.
-
-    Got `#{inspect(key)}` alongside `method: :get`.
-
-    Either pass `method: :post` (what the `:body` option is documented for), \
-    or pass the method as a string — `method: "GET"` — if you really do want \
-    a GET that carries a body, which CouchDB accepts and akaw sends verbatim.\
-    """
   end
 
   defp combine_headers(lists) do
@@ -217,60 +207,178 @@ defmodule Akaw.Request do
     |> Enum.reverse()
   end
 
-  defp apply_auth(opts, nil), do: opts
+  # nil rides the default pool the Akaw application booted. The keyword
+  # form carries a pool name plus Finch build options (:pool_tag).
+  defp pool_and_build_options(nil), do: {Akaw.Finch, []}
+  defp pool_and_build_options(name) when is_atom(name), do: {name, []}
 
-  defp apply_auth(opts, {:basic, user, pass}),
-    do: Keyword.put(opts, :auth, {:basic, "#{user}:#{pass}"})
+  defp pool_and_build_options(options) when is_list(options) do
+    {name, build_options} = Keyword.pop(options, :name, Akaw.Finch)
+    {name, Keyword.take(build_options, [:pool_tag])}
+  end
 
-  defp apply_auth(opts, {:bearer, token}),
-    do: Keyword.put(opts, :auth, {:bearer, token})
+  # ---------------------------------------------------------------------
+  # Running + retry
+  # ---------------------------------------------------------------------
 
-  defp apply_finch(opts, nil), do: opts
-  defp apply_finch(opts, name), do: Keyword.put(opts, :finch, name)
+  @idempotent_methods ["GET", "HEAD"]
 
-  defp handle_response({:ok, %Req.Response{status: status} = resp}, return_kind)
-       when status in 200..299 do
-    case return_kind do
-      :body -> {:ok, resp.body}
-      :response -> {:ok, to_akaw_response(resp)}
+  defp run_with_retry(finch_request, pool, finch_opts, retry?) do
+    case Finch.request(finch_request, pool, finch_opts) do
+      {:error, exception} = error ->
+        if retry? and finch_request.method in @idempotent_methods and
+             closed_socket?(exception) do
+          Logger.warning(
+            "akaw: retrying #{finch_request.method} #{finch_request.path} once — " <>
+              "pooled connection closed mid-request (keep-alive race): " <>
+              Exception.message(exception)
+          )
+
+          Finch.request(finch_request, pool, finch_opts)
+        else
+          error
+        end
+
+      ok ->
+        ok
     end
   end
 
-  defp handle_response({:ok, %Req.Response{status: status, body: body}}, _return_kind),
-    do: {:error, build_error(status, body)}
+  # Finch 0.23 wraps Mint's exception (%Finch.TransportError{reason:
+  # :closed, source: %Mint.TransportError{...}}); earlier versions
+  # surfaced Mint's struct directly. Match both so a Finch bump can't
+  # silently disable the policy — the exact drift class that bit the
+  # error-reason strings once already.
+  defp closed_socket?(%Finch.TransportError{reason: :closed}), do: true
+  defp closed_socket?(%Mint.TransportError{reason: :closed}), do: true
+  defp closed_socket?(_), do: false
 
-  defp handle_response({:error, exception}, _return_kind),
-    do: {:error, classify_error(exception)}
+  # ---------------------------------------------------------------------
+  # Response handling
+  # ---------------------------------------------------------------------
 
-  # The one place a transport response crosses to the ENDPOINT modules:
-  # every `return: :response` consumer sees %Akaw.Response{}. (The other
-  # crossing is request_raw/4, whose %Req.Response{} feeds only
-  # Akaw.Streaming — the module the transport swap rewrites wholesale.)
-  defp to_akaw_response(%Req.Response{status: status, headers: headers, body: body}) do
-    flat = for {name, values} <- headers, value <- values, do: {name, value}
-    %Response{status: status, headers: flat, body: body}
+  # A HEAD response has no body to inflate or decode, but it may still
+  # carry the content headers the body *would* have had (content-encoding
+  # included) — running it through decompress would try to gunzip "".
+  defp handle_response({:ok, %Finch.Response{} = response}, return_kind, "HEAD") do
+    decode_and_wrap(%Finch.Response{response | body: ""}, return_kind)
   end
 
-  # Req's decode_body step returns codec exceptions through the same
-  # {:error, exception} channel as transport failures. A 200 whose body
-  # fails JSON decoding is not a network problem — a caller following
-  # the documented "branch on body.exception, retry transport errors"
-  # pattern would spin forever on a permanently corrupt endpoint (a
-  # proxy truncating responses, a misbehaving middlebox). akaw decodes
-  # with the OTP-native JSON module via the decoders hook, so
-  # %JSON.DecodeError{} is the struct to catch; anything else really is
-  # transport. The streaming path already tags its own decode failures
-  # "stream_decode_error".
-  defp classify_error(%JSON.DecodeError{} = exception) do
-    %Error{
-      status: nil,
-      error: "decode_error",
-      reason: Exception.message(exception),
-      body: %{exception: exception}
-    }
+  defp handle_response({:ok, %Finch.Response{} = response}, return_kind, _method) do
+    case decompress(response) do
+      {:ok, response} -> decode_and_wrap(response, return_kind)
+      {:error, _} = error -> error
+    end
   end
 
-  defp classify_error(exception), do: Error.wrap_transport(exception)
+  defp handle_response({:error, exception}, _return_kind, _method),
+    do: {:error, Error.wrap_transport(exception)}
+
+  defp decode_and_wrap(%Finch.Response{status: status} = response, return_kind)
+       when status in 200..299 do
+    case decode_body(response) do
+      {:ok, body} ->
+        case return_kind do
+          :body -> {:ok, body}
+          :response -> {:ok, %Response{status: status, headers: response.headers, body: body}}
+        end
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  defp decode_and_wrap(%Finch.Response{status: status} = response, _return_kind) do
+    # Error bodies decode on the same content-type terms (the probe pins
+    # that CouchDB serves them as application/json) — but a *corrupt*
+    # error body keeps its status and raw bytes rather than collapsing
+    # into a status-less decode_error: the 404 is the signal, the body
+    # is garnish.
+    body =
+      case decode_body(response) do
+        {:ok, decoded} -> decoded
+        {:error, _} -> response.body
+      end
+
+    {:error, build_error(status, body)}
+  end
+
+  # Response JSON decodes with the OTP-native JSON module, gated on the
+  # content-type CouchDB declares. The probe (content_type_probe_test)
+  # pins the facts that make the gate safe: every JSON endpoint class
+  # answers application/json even with no Accept header, and the
+  # not-JSON classes (attachments, eventsource, design functions)
+  # declare themselves. A 200 whose declared-JSON body fails to decode
+  # is not a network problem: it classifies as "decode_error", never
+  # "transport_error" — a caller following the documented
+  # retry-on-transport pattern must not spin on a permanently corrupt
+  # endpoint (a proxy truncating responses, a misbehaving middlebox).
+  defp decode_body(%Finch.Response{body: body} = response) do
+    if json_content_type?(response.headers) and body not in [nil, ""] do
+      {:ok, JSON.decode!(body)}
+    else
+      {:ok, body}
+    end
+  rescue
+    exception in JSON.DecodeError ->
+      {:error,
+       %Error{
+         status: nil,
+         error: "decode_error",
+         reason: Exception.message(exception),
+         body: %{exception: exception}
+       }}
+  end
+
+  defp json_content_type?(headers) do
+    case header_value(headers, "content-type") do
+      nil ->
+        false
+
+      value ->
+        value
+        |> String.split(";", parts: 2)
+        |> hd()
+        |> String.trim()
+        |> String.downcase() == "application/json"
+    end
+  end
+
+  # gzip is the only encoding akaw ever advertises, so it's the only one
+  # handled. The content-encoding/content-length headers describe bytes
+  # that no longer exist after inflation and are dropped with them. A
+  # body that fails to inflate classifies like any other corrupt payload.
+  defp decompress(%Finch.Response{} = response) do
+    case header_value(response.headers, "content-encoding") do
+      encoding when encoding in ["gzip", "x-gzip"] ->
+        inflated = :zlib.gunzip(response.body)
+
+        headers =
+          Enum.reject(response.headers, fn {name, _value} ->
+            String.downcase(name) in ["content-encoding", "content-length"]
+          end)
+
+        {:ok, %Finch.Response{response | body: inflated, headers: headers}}
+
+      _ ->
+        {:ok, response}
+    end
+  rescue
+    _corrupt in ErlangError ->
+      {:error,
+       %Error{
+         status: nil,
+         error: "decode_error",
+         reason: "response declared content-encoding gzip but failed to inflate",
+         body: %{}
+       }}
+  end
+
+  defp header_value(headers, name) do
+    Enum.find_value(headers, fn {header_name, value} ->
+      String.downcase(header_name) == name && value
+    end)
+  end
 
   defp build_error(status, %{"error" => error, "reason" => reason} = body) do
     %Error{status: status, error: error, reason: reason, body: body}

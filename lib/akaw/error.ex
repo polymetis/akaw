@@ -15,12 +15,11 @@ defmodule Akaw.Error do
     * **Transport** (DNS, connection refused, timeout, …) — `status` is
       `nil`, `error` is `"transport_error"`, `reason` is the underlying
       exception's message, `body` is `%{exception: original_exception}`
-      so you can re-examine the source error if needed. That struct is
-      a `%Req.TransportError{}` on plain requests, `reduce_*_while`
-      calls, and stream opens; only a mid-feed failure on the lazy
-      streams carries the raw Finch/Mint exception, because those
-      arrive via `Req.parse_message/2` outside Req's error
-      normalization.
+      so you can re-examine the source error if needed. The struct is
+      whatever the transport raised — usually a `%Mint.TransportError{}`,
+      occasionally Finch's own — on every path alike; `reason` is
+      `Exception.message/1` of it, which stays stable across transport
+      versions.
 
     * **Decode failures** — a 2xx response whose body failed JSON
       decoding (a proxy truncating responses, a misbehaving middlebox):

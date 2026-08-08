@@ -122,7 +122,6 @@ defmodule AkawTest do
             receive_timeout: 30_000,
             pool_timeout: 500,
             retry: false,
-            retry_delay: 10,
             compressed: false,
             headers: [{"x-extra", "1"}]
           ]
@@ -135,7 +134,6 @@ defmodule AkawTest do
                  :receive_timeout,
                  :pool_timeout,
                  :retry,
-                 :retry_delay,
                  :compressed,
                  :headers
                ])

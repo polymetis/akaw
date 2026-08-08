@@ -180,8 +180,9 @@ defmodule Akaw do
     * `:req_options` — a *narrow, named* set of client-level options merged
       into every request; per-call options override these. Allowed keys:
       `:receive_timeout`, `:pool_timeout`, `:retry` (atoms only —
-      `false`, `:safe_transient`, or `:transient`; plain requests only,
-      streaming and feed paths never retry), `:retry_delay`,
+      `false` disables the keep-alive-race retry; `:safe_transient` /
+      `:transient` both mean the default policy; plain requests only,
+      streaming and feed paths never retry),
       `:compressed`, and `:headers`. Anything
       else raises `ArgumentError` — this is deliberately not an
       arbitrary passthrough to the underlying HTTP client, so the
@@ -242,7 +243,6 @@ defmodule Akaw do
     :receive_timeout,
     :pool_timeout,
     :retry,
-    :retry_delay,
     :compressed,
     :headers
   ]

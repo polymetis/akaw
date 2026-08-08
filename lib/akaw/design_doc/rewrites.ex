@@ -41,11 +41,12 @@ defmodule Akaw.DesignDoc.Rewrites do
     * `:method` — `:get` (default), any other HTTP verb atom (`:post`,
       `:put`, `:delete`, `:head`, `:patch`, `:options`), or a string for a
       non-standard verb
-    * `:body` — request body, sent as JSON. Requires a method that carries
-      one: passing a body with `method: :get` raises `ArgumentError`, since
-      a rewrite rule pinned to `"method": "GET"` would stop matching. Use
-      `method: :post`, or the string `method: "GET"` to send a GET that
-      carries a body verbatim.
+    * `:body` — request body, sent as JSON. Every verb goes to the wire
+      exactly as given — a body on `:get` is sent as a GET carrying a
+      body, which CouchDB accepts and rewrite rules pinned to
+      `"method": "GET"` still match. (The Req-era transport rewrote
+      GET-with-body into POST, so this once raised; the current
+      transport never rewrites a verb.)
     * `:params` — query-string parameters. These **override** same-named
       params already present in `path` rather than appending to them.
   """

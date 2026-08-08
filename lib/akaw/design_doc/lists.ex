@@ -28,8 +28,9 @@ defmodule Akaw.DesignDoc.Lists do
   ## Options
 
     * `:method` — `:get` (default) or `:post`
-    * `:body` — request body (only meaningful for `:post`; passing one with
-      `method: :get` raises `ArgumentError`)
+    * `:body` — request body (only meaningful for `:post`; a body on
+      `:get` is sent verbatim — CouchDB accepts it, but list functions
+      won't read it)
     * `:params` — query-string parameters; JSON-typed keys (`startkey`,
       `endkey`, `key`) are auto-encoded
   """

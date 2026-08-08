@@ -973,7 +973,7 @@ defmodule Akaw.ReduceWhileTest do
 
       client =
         Loopback.client(flaky_once_plug(calls),
-          req_options: [retry: :safe_transient, retry_delay: fn _ -> 0 end]
+          req_options: [retry: :safe_transient]
         )
 
       assert {:error, %Akaw.Error{status: 503}} =
@@ -1018,7 +1018,7 @@ defmodule Akaw.ReduceWhileTest do
 
       client =
         Loopback.client(flaky_once_plug(calls),
-          req_options: [retry: :safe_transient, retry_delay: fn _ -> 0 end]
+          req_options: [retry: :safe_transient]
         )
 
       assert_raise Akaw.Error, ~r/503/, fn ->

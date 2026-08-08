@@ -58,11 +58,15 @@ defmodule Akaw.DesignDoc.ListsTest do
     assert JSON.decode!(body) == %{"filter" => "x"}
   end
 
-  test "call/6 refuses a body on the default :get method", %{client: client} do
-    # Req 0.7 would rewrite this to POST, so a list function branching on
-    # req.method would quietly take the other branch.
-    assert_raise ArgumentError, ~r/cannot send a request body with `method: :get`/, fn ->
-      Akaw.DesignDoc.Lists.call(client, "db", "d", "fmt", "v", body: %{filter: "x"})
-    end
+  test "call/6 sends a body on the default :get method verbatim", %{client: client} do
+    # The verb is never rewritten: a list function branching on
+    # req.method still sees GET even when the request carries a body.
+    # (The Req-era transport promoted GET-with-body to POST, so this
+    # once raised.)
+    assert {:ok, _} =
+             Akaw.DesignDoc.Lists.call(client, "db", "d", "fmt", "v", body: %{filter: "x"})
+
+    assert_receive %{method: "GET", body: body}
+    assert JSON.decode!(body) == %{"filter" => "x"}
   end
 end

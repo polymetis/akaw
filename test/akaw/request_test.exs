@@ -144,26 +144,74 @@ defmodule Akaw.RequestTest do
       refute stderr =~ "deprecated"
     end
 
-    @tag :capture_log
-    test "non-streaming requests keep Req's default retry" do
-      # The streaming paths pin retry: false (delivery-once); complete
-      # single-shot responses are idempotent to retry, so the plain
-      # request path deliberately keeps Req's :safe_transient default.
+    test "a 503 surfaces immediately — status codes are never retried" do
+      # Deliberate narrowing from the Req era (which retried
+      # 408/429/500/502/503/504 with backoff): akaw's own policy retries
+      # exactly one failure class — the pooled keep-alive race below.
+      # The full status-classification port is a pre-Hex item.
       calls = :counters.new(1, [])
 
       plug = fn conn ->
         :counters.add(calls, 1, 1)
-
-        case :counters.get(calls, 1) do
-          1 -> Plug.Conn.send_resp(conn, 503, "unavailable")
-          _ -> Loopback.json(conn, %{"ok" => true})
-        end
+        Plug.Conn.send_resp(conn, 503, "unavailable")
       end
 
-      client = Loopback.client(plug, req_options: [retry_delay: fn _ -> 0 end])
+      assert {:error, %Akaw.Error{status: 503}} =
+               Request.request(Loopback.client(plug), :get, "/")
 
-      assert {:ok, %{"ok" => true}} = Request.request(client, :get, "/")
-      assert :counters.get(calls, 1) == 2
+      assert :counters.get(calls, 1) == 1
+    end
+
+    test "the keep-alive race is retried once, loudly, for idempotent methods" do
+      # A server hanging up after reading the request without answering
+      # is what a pooled connection closed mid-request looks like —
+      # CouchDB's own keep-alive timeout guarantees this race in normal
+      # operation. GET retries once; the retry logs at :warning so the
+      # policy is observable, never silent.
+      port = close_first_then_serve()
+      client = Akaw.new(base_url: "http://127.0.0.1:#{port}", finch: start_test_finch())
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:ok, %{"ok" => true}} = Request.request(client, :get, "/")
+        end)
+
+      assert log =~ "retrying GET"
+      assert log =~ "keep-alive race"
+    end
+
+    test "the keep-alive race is NOT retried for non-idempotent methods" do
+      port = close_first_then_serve()
+      client = Akaw.new(base_url: "http://127.0.0.1:#{port}", finch: start_test_finch())
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:error, %Akaw.Error{error: "transport_error"} = err} =
+                   Request.request(client, :post, "/db", json: %{a: 1})
+
+          assert Exception.message(err.body.exception) =~ "closed"
+        end)
+
+      refute log =~ "retrying"
+    end
+
+    test "retry: false disables even the keep-alive-race retry" do
+      port = close_first_then_serve()
+
+      client =
+        Akaw.new(
+          base_url: "http://127.0.0.1:#{port}",
+          finch: start_test_finch(),
+          req_options: [retry: false]
+        )
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:error, %Akaw.Error{error: "transport_error"}} =
+                   Request.request(client, :get, "/")
+        end)
+
+      refute log =~ "retrying"
     end
 
     test "json: bodies carry content-type and accept, encoded by the native JSON module" do
@@ -327,5 +375,48 @@ defmodule Akaw.RequestTest do
       cookies = for {"cookie", v} <- headers, do: v
       assert cookies == ["AuthSession=NEW"]
     end
+  end
+
+  # A raw listener whose first connection reads the request and hangs up
+  # without answering — %Mint.TransportError{reason: :closed}, the exact
+  # shape of the pooled keep-alive race — and whose second connection
+  # serves a real 200. A stub plug can't produce this: a cooperative
+  # server always answers what it accepts.
+  defp close_first_then_serve do
+    {:ok, listen} =
+      :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true, ip: {127, 0, 0, 1}])
+
+    {:ok, port} = :inet.port(listen)
+
+    spawn_link(fn ->
+      {:ok, first} = :gen_tcp.accept(listen)
+      _request = :gen_tcp.recv(first, 0, 5_000)
+      :gen_tcp.close(first)
+
+      {:ok, second} = :gen_tcp.accept(listen)
+      _request = :gen_tcp.recv(second, 0, 5_000)
+      body = ~s({"ok":true})
+
+      :gen_tcp.send(second, [
+        "HTTP/1.1 200 OK\r\n",
+        "content-type: application/json\r\n",
+        "content-length: #{byte_size(body)}\r\n\r\n",
+        body
+      ])
+
+      :gen_tcp.close(second)
+      :gen_tcp.close(listen)
+    end)
+
+    port
+  end
+
+  # The raw fixture bypasses Loopback.client, so it also needs its own
+  # per-test pool (same reasoning as the seam's: the shared pool never
+  # retires entries for dead ports).
+  defp start_test_finch do
+    name = :"akaw_request_test_finch_#{System.unique_integer([:positive])}"
+    start_supervised!({Finch, name: name}, id: make_ref())
+    name
   end
 end
