@@ -39,6 +39,15 @@ defmodule Akaw.Integration.ContentTypeProbeTest do
         return { body: body, headers: { 'Content-Type': 'text/plain' } };
       }
       """
+    },
+    lists: %{
+      ids: """
+      function(head, req) {
+        start({ headers: { "Content-Type": "text/plain" } });
+        var row;
+        while (row = getRow()) { send(row.id + "\\n"); }
+      }
+      """
     }
   }
 
@@ -105,14 +114,16 @@ defmodule Akaw.Integration.ContentTypeProbeTest do
     test "error bodies are JSON on the same terms", %{db: db} do
       # Missing database and rev-less overwrite: the two everyday error
       # shapes (404 / 409). Status is config-independent for both.
-      {404, missing_headers} = raw_request("GET", "/no_such_db_#{System.unique_integer([:positive])}")
+      assert {404, missing_headers} =
+               raw_request("GET", "/no_such_db_#{System.unique_integer([:positive])}")
+
       assert content_type(missing_headers) == "application/json"
 
-      {409, conflict_headers} =
-        raw_request("PUT", "/#{db}/doc_1",
-          body: ~s({"n":2}),
-          headers: ["content-type: application/json"]
-        )
+      assert {409, conflict_headers} =
+               raw_request("PUT", "/#{db}/doc_1",
+                 body: ~s({"n":2}),
+                 headers: ["content-type: application/json"]
+               )
 
       assert content_type(conflict_headers) == "application/json"
 
@@ -126,18 +137,23 @@ defmodule Akaw.Integration.ContentTypeProbeTest do
 
   describe "classes the decode gate must leave alone declare themselves" do
     test "attachments carry their stored content-type", %{db: db} do
-      {200, headers} = raw_request("GET", "/#{db}/doc_1/note.txt")
+      assert {200, headers} = raw_request("GET", "/#{db}/doc_1/note.txt")
       assert content_type(headers) == "text/plain"
     end
 
     test "feed=eventsource is text/event-stream", %{db: db} do
-      {200, headers} = raw_request("GET", "/#{db}/_changes?feed=eventsource&timeout=0")
+      assert {200, headers} = raw_request("GET", "/#{db}/_changes?feed=eventsource&timeout=0")
       assert content_type(headers) == "text/event-stream"
     end
 
     test "design functions set their own content-type", %{db: db} do
-      {200, headers} = raw_request("GET", "/#{db}/_design/fns/_show/echo/doc_1")
-      assert content_type(headers) == "text/plain"
+      for path <- [
+            "/#{db}/_design/fns/_show/echo/doc_1",
+            "/#{db}/_design/fns/_list/ids/by_n"
+          ] do
+        assert {200, headers} = raw_request("GET", path)
+        assert {path, content_type(headers)} == {path, "text/plain"}
+      end
     end
   end
 
@@ -213,8 +229,22 @@ defmodule Akaw.Integration.ContentTypeProbeTest do
 
   defp recv_until_closed(socket, acc) do
     case :gen_tcp.recv(socket, 0, 5_000) do
-      {:ok, data} -> recv_until_closed(socket, [acc | data])
-      {:error, :closed} -> IO.iodata_to_binary(acc)
+      {:ok, data} ->
+        recv_until_closed(socket, [acc | data])
+
+      {:error, :closed} ->
+        IO.iodata_to_binary(acc)
+
+      {:error, reason} ->
+        # Name the failure instead of dying in a clause error — when
+        # this fires against some future CouchDB that stops honoring
+        # `connection: close`, the bytes seen so far are the evidence.
+        received = IO.iodata_to_binary(acc)
+
+        flunk("""
+        recv failed with #{inspect(reason)} before the server closed.
+        #{byte_size(received)} bytes received: #{inspect(String.slice(received, 0, 300))}
+        """)
     end
   end
 
