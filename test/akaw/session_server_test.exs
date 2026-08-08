@@ -24,7 +24,7 @@ defmodule Akaw.SessionServerTest do
 
   # Same as `counting_session_plug/0`, but also tells `test_pid` about every
   # call, so a test can wait for the Nth refresh instead of sleeping and
-  # hoping. The plug runs in a Bandit acceptor process, so the message comes
+  # hoping. The plug runs in a Bandit connection-handler process, so the message comes
   # from there — the test just receives.
   defp announcing_session_plug(test_pid) do
     {plug, counter} = counting_session_plug()

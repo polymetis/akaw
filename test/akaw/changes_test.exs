@@ -277,7 +277,7 @@ defmodule Akaw.ChangesTest do
     # We capture the query string into an ETS table rather than sending it
     # as a message — `next_chunk`'s `receive` eagerly drains the mailbox
     # and would swallow a regular `send`. (The plug runs in a Bandit
-    # acceptor process, so the process dictionary can't reach the test
+    # connection-handler process, so the process dictionary can't reach the test
     # either.)
     test "forces feed=continuous and forwards other opts" do
       seen = :ets.new(:akaw_changes_qs, [:public])

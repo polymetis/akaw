@@ -118,7 +118,7 @@ defmodule Akaw.PropertiesTest do
     property "Authorization: Basic roundtrips through Base.decode64 to 'user:pass'" do
       # One listener for the whole property: the plug is case-invariant
       # (it only echoes the auth header), and a listener per generated
-      # case would pile up ~100 supervised acceptor trees before the
+      # case would pile up ~100 supervised listener trees before the
       # test exits. Only the client varies.
       test = self()
 

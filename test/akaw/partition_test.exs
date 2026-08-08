@@ -64,7 +64,7 @@ defmodule Akaw.PartitionTest do
     # genuinely untested feature the audit's coverage run surfaced.
     # ETS rather than send: the lazy streams drain the consuming
     # process's mailbox, so a message-based probe gets eaten — and the
-    # plug runs in a Bandit acceptor process, so Process.put wouldn't
+    # plug runs in a Bandit connection-handler process, so Process.put wouldn't
     # reach the test either.
     defp partition_stream_plug(container, seen) do
       body =

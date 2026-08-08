@@ -107,7 +107,7 @@ defmodule Akaw.DocumentsTest do
   describe "stream_all_docs/3" do
     test "→ GET /{db}/_all_docs and forwards JSON-typed params encoded" do
       # Observed via ETS, not the process dictionary or send/assert_receive:
-      # the plug runs in a Bandit acceptor process, and consuming a lazy
+      # the plug runs in a Bandit connection-handler process, and consuming a lazy
       # stream drains the caller's mailbox.
       seen = :ets.new(:akaw_doc_stream, [:public])
 

@@ -146,7 +146,7 @@ defmodule Akaw.ServerTest do
     # Observed via ETS, not send/assert_receive: consuming a lazy stream
     # drains the caller's mailbox, so a message sent mid-stream would be
     # eaten before the test could assert on it. (The plug also runs in a
-    # Bandit acceptor process, so Process.put/get can't reach the test.)
+    # Bandit connection-handler process, so Process.put/get can't reach the test.)
     seen = :ets.new(:akaw_db_updates_qs, [:public])
 
     plug = fn conn ->
