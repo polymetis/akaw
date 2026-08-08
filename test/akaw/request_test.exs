@@ -1,10 +1,11 @@
 defmodule Akaw.RequestTest do
   use ExUnit.Case, async: true
 
+  alias Akaw.Loopback
   alias Akaw.Request
 
   defp client_with(plug, extra \\ []) do
-    Akaw.new([base_url: "http://couch.example", req_options: [plug: plug, retry: false]] ++ extra)
+    Loopback.client(plug, [req_options: [retry: false]] ++ extra)
   end
 
   describe "URL composition" do
@@ -12,12 +13,12 @@ defmodule Akaw.RequestTest do
       test = self()
 
       plug = fn conn ->
-        send(test, {:url, conn.scheme, conn.host, conn.request_path})
-        Req.Test.json(conn, %{})
+        send(test, {:url, conn.request_path})
+        Loopback.json(conn, %{})
       end
 
       assert {:ok, _} = Request.request(client_with(plug), :get, "/_all_dbs")
-      assert_receive {:url, :http, "couch.example", "/_all_dbs"}
+      assert_receive {:url, "/_all_dbs"}
     end
 
     test "forwards :params as the query string" do
@@ -25,7 +26,7 @@ defmodule Akaw.RequestTest do
 
       plug = fn conn ->
         send(test, {:qs, conn.query_string})
-        Req.Test.json(conn, %{})
+        Loopback.json(conn, %{})
       end
 
       assert {:ok, _} =
@@ -42,7 +43,7 @@ defmodule Akaw.RequestTest do
 
       plug = fn conn ->
         send(test, {:auth, Plug.Conn.get_req_header(conn, "authorization")})
-        Req.Test.json(conn, %{})
+        Loopback.json(conn, %{})
       end
 
       client = client_with(plug, auth: {:basic, "user", "pw"})
@@ -55,7 +56,7 @@ defmodule Akaw.RequestTest do
 
       plug = fn conn ->
         send(test, {:auth, Plug.Conn.get_req_header(conn, "authorization")})
-        Req.Test.json(conn, %{})
+        Loopback.json(conn, %{})
       end
 
       client = client_with(plug, auth: {:bearer, "abc.def.ghi"})
@@ -71,7 +72,7 @@ defmodule Akaw.RequestTest do
         |> Plug.Conn.put_resp_content_type("application/json")
         |> Plug.Conn.send_resp(
           404,
-          Jason.encode!(%{"error" => "not_found", "reason" => "missing"})
+          JSON.encode!(%{"error" => "not_found", "reason" => "missing"})
         )
       end
 
@@ -124,7 +125,7 @@ defmodule Akaw.RequestTest do
 
       plug = fn conn ->
         send(test, {:accept_encoding, Plug.Conn.get_req_header(conn, "accept-encoding")})
-        Req.Test.json(conn, %{})
+        Loopback.json(conn, %{})
       end
 
       assert {:ok, _} = Request.request(client_with(plug), :get, "/", compressed: false)
@@ -132,7 +133,7 @@ defmodule Akaw.RequestTest do
     end
 
     test "a flat :pool_timeout is folded into finch: [...] rather than deprecated" do
-      plug = fn conn -> Req.Test.json(conn, %{}) end
+      plug = fn conn -> Loopback.json(conn, %{}) end
 
       stderr =
         ExUnit.CaptureIO.capture_io(:stderr, fn ->
@@ -155,15 +156,11 @@ defmodule Akaw.RequestTest do
 
         case :counters.get(calls, 1) do
           1 -> Plug.Conn.send_resp(conn, 503, "unavailable")
-          _ -> Req.Test.json(conn, %{"ok" => true})
+          _ -> Loopback.json(conn, %{"ok" => true})
         end
       end
 
-      client =
-        Akaw.new(
-          base_url: "http://couch.example",
-          req_options: [plug: plug, retry_delay: fn _ -> 0 end]
-        )
+      client = Loopback.client(plug, req_options: [retry_delay: fn _ -> 0 end])
 
       assert {:ok, %{"ok" => true}} = Request.request(client, :get, "/")
       assert :counters.get(calls, 1) == 2
@@ -185,7 +182,7 @@ defmodule Akaw.RequestTest do
           body: body
         })
 
-        Req.Test.json(conn, %{"ok" => true})
+        Loopback.json(conn, %{"ok" => true})
       end
 
       assert {:ok, _} =
@@ -205,7 +202,7 @@ defmodule Akaw.RequestTest do
 
       plug = fn conn ->
         send(test, {:content_type, Plug.Conn.get_req_header(conn, "content-type")})
-        Req.Test.json(conn, %{"ok" => true})
+        Loopback.json(conn, %{"ok" => true})
       end
 
       assert {:ok, _} =
@@ -218,8 +215,7 @@ defmodule Akaw.RequestTest do
     end
 
     test "transport exceptions are wrapped into %Akaw.Error{status: nil}" do
-      plug = fn conn -> Req.Test.transport_error(conn, :econnrefused) end
-      client = client_with(plug)
+      client = Loopback.refused_client(req_options: [retry: false])
 
       assert {:error, %Akaw.Error{} = err} = Request.request(client, :get, "/")
       assert err.status == nil
@@ -266,7 +262,7 @@ defmodule Akaw.RequestTest do
 
       plug = fn conn ->
         send(test, {:headers, conn.req_headers})
-        Req.Test.json(conn, %{})
+        Loopback.json(conn, %{})
       end
 
       client = client_with(plug, headers: [{"x-couch-feature", "akaw"}])
@@ -280,7 +276,7 @@ defmodule Akaw.RequestTest do
 
       plug = fn conn ->
         send(test, {:headers, conn.req_headers})
-        Req.Test.json(conn, %{})
+        Loopback.json(conn, %{})
       end
 
       client = client_with(plug, headers: [{"x-from-client", "yes"}])
@@ -298,7 +294,7 @@ defmodule Akaw.RequestTest do
 
       plug = fn conn ->
         send(test, {:headers, conn.req_headers})
-        Req.Test.json(conn, %{})
+        Loopback.json(conn, %{})
       end
 
       client = client_with(plug, headers: [{"cookie", "AuthSession=OLD"}])
