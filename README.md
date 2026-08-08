@@ -191,3 +191,7 @@ elsewhere with `AKAW_TEST_URL`, `AKAW_TEST_USER`, and `AKAW_TEST_PASS`.
 
 Both suites run on every push and pull request against a real CouchDB
 service container — see [`.github/workflows/elixir.yml`](.github/workflows/elixir.yml).
+
+## License
+
+MIT — see [LICENSE](LICENSE).

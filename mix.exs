@@ -15,7 +15,22 @@ defmodule Akaw.MixProject do
       name: "Akaw",
       description: "An Elixir client for the CouchDB HTTP API.",
       source_url: @source_url,
-      docs: docs()
+      docs: docs(),
+      package: package()
+    ]
+  end
+
+  defp package do
+    [
+      licenses: ["MIT"],
+      links: %{
+        "GitHub" => @source_url,
+        "Changelog" => "#{@source_url}/blob/main/CHANGELOG.md"
+      },
+      # Explicit allowlist rather than relying on the defaults: the repo has
+      # a gitignored .claude/ working directory, and a published tarball
+      # should never be able to pick anything up from it by accident.
+      files: ~w(lib mix.exs README.md CHANGELOG.md LICENSE .formatter.exs)
     ]
   end
 
@@ -43,7 +58,7 @@ defmodule Akaw.MixProject do
   defp docs do
     [
       main: "readme",
-      extras: ["README.md", "CHANGELOG.md"],
+      extras: ["README.md", "CHANGELOG.md", {"LICENSE", title: "License"}],
       source_ref: "v#{@version}",
       # Mirrors the module map in Akaw's @moduledoc: the CouchDB API is big
       # and flat, so grouping by API section is the only way the sidebar
