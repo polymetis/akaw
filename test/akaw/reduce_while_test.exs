@@ -681,6 +681,20 @@ defmodule Akaw.ReduceWhileTest do
       assert Keyword.get(req, :receive_timeout) == 65_000
     end
 
+    test "default_receive_timeout/3 treats numeric-string params like integers" do
+      # CouchDB accepts heartbeat: "30000" exactly like 30_000 — the
+      # string spelling must not silently fall through to the 65s
+      # default and undercut a longer server window.
+      req_hb = Akaw.Streaming.default_receive_timeout(bare_client(), [], heartbeat: "30000")
+      assert Keyword.get(req_hb, :receive_timeout) == 60_000
+
+      req_t = Akaw.Streaming.default_receive_timeout(bare_client(), [], timeout: "90000")
+      assert Keyword.get(req_t, :receive_timeout) == 95_000
+
+      req_garbage = Akaw.Streaming.default_receive_timeout(bare_client(), [], heartbeat: "soon")
+      assert Keyword.get(req_garbage, :receive_timeout) == 65_000
+    end
+
     test "default_receive_timeout/3 derives from an explicit :timeout param" do
       req = Akaw.Streaming.default_receive_timeout(bare_client(), [], timeout: 90_000)
       assert Keyword.get(req, :receive_timeout) == 95_000

@@ -313,23 +313,47 @@ defmodule Akaw.Streaming do
   end
 
   defp derive_receive_timeout(couchdb_opts) do
-    case Keyword.get(couchdb_opts, :heartbeat) do
-      hb when is_integer(hb) and hb > 0 ->
-        hb * 2
+    heartbeat = Keyword.get(couchdb_opts, :heartbeat)
 
-      server_picked when server_picked in [true, "true"] ->
-        @server_picked_heartbeat_timeout
-
-      _ ->
-        case Keyword.get(couchdb_opts, :timeout) do
-          server_timeout when is_integer(server_timeout) and server_timeout >= 0 ->
-            server_timeout + @feed_timeout_slack
-
-          _ ->
-            @server_default_feed_timeout + @feed_timeout_slack
-        end
+    case positive_ms(heartbeat) do
+      nil when heartbeat in [true, "true"] -> @server_picked_heartbeat_timeout
+      nil -> quiet_window(couchdb_opts) + @feed_timeout_slack
+      hb -> hb * 2
     end
   end
+
+  defp quiet_window(couchdb_opts) do
+    case non_negative_ms(Keyword.get(couchdb_opts, :timeout)) do
+      nil -> @server_default_feed_timeout
+      server_timeout -> server_timeout
+    end
+  end
+
+  # CouchDB accepts numeric query params as strings — `heartbeat: "30000"`
+  # reaches the server exactly like `heartbeat: 30_000`, so both
+  # spellings must derive the same ceiling. A string that isn't a plain
+  # integer falls through to the defaults.
+  defp positive_ms(value) when is_integer(value) and value > 0, do: value
+
+  defp positive_ms(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, ""} when n > 0 -> n
+      _ -> nil
+    end
+  end
+
+  defp positive_ms(_), do: nil
+
+  defp non_negative_ms(value) when is_integer(value) and value >= 0, do: value
+
+  defp non_negative_ms(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, ""} when n >= 0 -> n
+      _ -> nil
+    end
+  end
+
+  defp non_negative_ms(_), do: nil
 
   # Feeds where CouchDB may legitimately hold the connection open past
   # the transport's default receive timeout. "normal" answers
