@@ -9,38 +9,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Requires Req `~> 0.7`** (was `~> 0.5`). This is a hard floor — Akaw now
-  uses Req 0.7's `finch: [name: …]` option spelling, which raises on 0.5. If
-  your application pins Req itself, it needs the same bump.
+- **The HTTP stack is Finch-direct, and akaw is an OTP application.**
+  Req and Jason left the dependency tree; akaw builds its requests
+  itself and runs them straight through Finch (0.23) over Mint (1.9) —
+  between your call and the socket sit exactly one HTTP client and one
+  parser, and akaw's transport behavior stops being a function of which
+  Req version your application resolves. The application boots one
+  Finch instance named `Akaw.Finch` (one HTTP/1 pool of 50 connections
+  per CouchDB host); every client uses it unless `Akaw.new(finch: ...)`
+  names another. HTTP/1.1 is the protocol — CouchDB (mochiweb) has no
+  h2, verified empirically.
 
-  Also moves to Finch 0.23, Mint 1.9.3, and Plug 1.20.3 (test-only).
+  Consumer-visible deltas of the swap itself:
+
+    * **No redirect following.** CouchDB doesn't redirect; if you had a
+      proxy that does, follow it yourself.
+    * **Telemetry is Finch's spans directly** (`[:finch, :request, ...]`
+      and friends) — there are no Req-level events anymore.
+    * **Requests carry `user-agent: akaw/<version>`** (previously Req's
+      banner).
+    * **Retry is akaw's documented policy** — see the retry entry below.
+    * The `:finch` client option and the `:pool_timeout` /
+      `:receive_timeout` escape hatches keep their exact spellings —
+      they are native now, not translated.
+
+- **Retry is one failure class, once, loudly.** Plain requests retry
+  exactly one thing: the pooled keep-alive race — the server closing a
+  parked connection between checkout and write, which CouchDB's own
+  keep-alive timeout guarantees happens in normal operation. Idempotent
+  methods (GET/HEAD) retry it once; every retry logs at `:warning`, so
+  the policy is observable rather than silent; `retry: false` disables
+  it. Everything else surfaces immediately — where the Req era retried
+  408/429/500/502/503/504 with backoff, a 503 now reaches your code on
+  the first try. That narrowing is deliberate (deployments fronted by
+  throttling proxies are a pre-Hex concern; the full classification
+  port is on that checklist), and `:retry_delay` leaves the allowlist
+  with the backoff machinery. `:safe_transient` and `:transient` are
+  still accepted as `:retry` values and both mean the default policy.
+
+- **`Akaw.Changes.stream/3` and friends no longer touch unrelated
+  mail.** The lazy streams consume their response parts with a
+  selective `receive` — a GenServer's own messages are left in its
+  mailbox, where the Req-era implementation's receive loop could
+  swallow them. The remaining caveat is growth, not theft: parts arrive
+  with no backpressure, so prefer `reduce_*_while` from anything
+  long-lived.
 
 - **`Akaw.new/1` lifts credentials out of `:base_url`.** Given
   `base_url: "http://admin:pw@host:5984"`, the credential is moved into
   `:auth` as `{:basic, "admin", "pw"}` and the stored `:base_url` becomes
   `"http://host:5984"`. An explicit `:auth` still wins.
 
-  Req 0.5 discarded URL credentials entirely (CouchDB answered 401); Req 0.7
-  honours them. Handling it in `Akaw.new/1` keeps the behaviour the same
-  either way, and keeps the secret out of `inspect/1` output — `Akaw.Client`
-  redacts `:auth` but deliberately prints `:base_url`.
+  Finch silently discards URL userinfo, so without the lift a URL
+  credential would never reach CouchDB at all — the lift is what makes
+  the spelling work, and it keeps the secret out of `inspect/1` output:
+  `Akaw.Client` redacts `:auth` but deliberately prints `:base_url`.
 
-- **Sending a request body with `method: :get` now raises `ArgumentError`**
-  in `Akaw.DesignDoc.Shows`, `Lists`, `Rewrites`, and `Updates`.
+- **Verbs go to the wire verbatim — a GET carrying a body included.**
+  In `Akaw.DesignDoc.Shows`, `Lists`, `Rewrites`, and `Updates`, both
+  the atom and string method spellings are sent exactly as given: a
+  `_rewrite` rule pinned to `"method": "GET"` keeps matching even when
+  the request has a body, and a `_show`/`_list` function branching on
+  `req.method` sees the verb you wrote. (Req rewrote GET-with-body into
+  POST, so mid-history this combination raised rather than let the verb
+  change silently; with a transport that never rewrites, the guard is
+  unnecessary.)
 
-  Req 0.7 silently rewrites a GET carrying a body into a POST. Against
-  CouchDB that changes which handler runs: a `_rewrite` rule pinned to
-  `"method": "GET"` stops matching and returns 404, and a `_show`/`_list`
-  function branching on `req.method` takes the other branch without erroring.
-  Rather than let the verb change under you, Akaw refuses the combination.
-
-  Pass `method: :post`, or the string `method: "GET"` if you genuinely want a
-  GET that carries a body — Akaw sends that verbatim.
-
-- **Query parameters are one-value-per-key.** Req 0.7 deduplicates params,
-  keeping the last occurrence, where Req 0.5 appended. A repeated key in a
-  `:params` keyword list no longer produces two query parameters, and for
-  `Akaw.DesignDoc.Rewrites`, `:params` now *overrides* same-named parameters
+- **Query parameters are one-value-per-key**, keeping the last
+  occurrence — now akaw's own documented encoding (www-form, spaces as
+  `+`), implemented in `Akaw.Request`. A repeated key in a `:params`
+  keyword list produces one query parameter, and for
+  `Akaw.DesignDoc.Rewrites`, `:params` *overrides* same-named parameters
   already present in the rewrite path rather than appending to them.
 
 - **Attachments with an archive content type are no longer auto-decoded.**
@@ -117,10 +156,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requests (longpoll included) pin retry off for the additional,
   measured reason that retrying a client-side-timed-out longpoll is
   guaranteed to fail again while abandoning server-side connections.
-  Plain non-streaming requests keep Req's default retry.
+  Plain non-streaming requests take the keep-alive-race retry described
+  in the retry entry above — and nothing more.
 
 - **`:req_options` is now a narrow, named allowlist** —
-  `:receive_timeout`, `:pool_timeout`, `:retry`/`:retry_delay` (plain
+  `:receive_timeout`, `:pool_timeout`, `:retry` (plain
   requests only), `:compressed`, `:headers` — and anything else
   raises `ArgumentError` at `Akaw.new/1`. The open passthrough welded
   akaw's public contract to the underlying HTTP client's option surface
@@ -131,10 +171,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message and docs carry the copy-pasteable supervision snippet.
 
 - **One JSON parser, and it's the runtime's.** All request bodies and
-  response decoding now go through the OTP-native `JSON` module; Jason
-  no longer executes for akaw's requests (it remains in the dependency
-  tree only because Req requires it — until the transport swap removes
-  both). Motivation, all measured: the two parsers agreed on every
+  response decoding go through the OTP-native `JSON` module; Jason is
+  gone from the dependency tree entirely. Motivation, all measured: the two parsers agreed on every
   probed edge-case *value* but produced entirely different exception
   types and diagnostics on failure — the split-brain landed exactly on
   the debugging path; native is faster on every CouchDB-shaped workload
@@ -149,12 +187,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carries a `Jason.Encoder` implementation (`@derive Jason.Encoder` on
   your doc structs, `Decimal` < 2.3) raises `Protocol.UndefinedError`
   at request-build time — derive or implement `JSON.Encoder` instead
-  (Elixir's calendar types are covered out of the box). And the decoder
-  hook replaces Req's default `[:json, :json_api]` pair, so an
+  (Elixir's calendar types are covered out of the box). And the decode
+  gate fires exactly on `application/json` (verified against real
+  CouchDB by the content-type probe in the integration suite), so an
   attachment stored as `application/vnd.api+json` comes back as raw
   bytes rather than auto-decoded — consistent with the archive
   content-type posture above; CouchDB's own API always answers
-  `application/json`.
+  `application/json`, even to requests with no `Accept` header.
 
 - **The test seam is a real socket, and `:plug` left the contract.**
   Akaw's whole unit suite now serves its stub plugs from Bandit
@@ -275,8 +314,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `{:ok, final_acc}` means every row was delivered exactly once. (The
   per-call/per-client opt-in that originally shipped with this fix was
   removed later in this same release — see "Streaming and feed requests
-  never retry" above.) Plain non-streaming requests keep Req's default
-  retry, tunable at the client level.
+  never retry" above.) Plain non-streaming requests take only the
+  keep-alive-race retry described in the Changed section.
 
 - **A `password_fn` that raises or exits during a scheduled refresh no
   longer crash-loops `Akaw.SessionServer`.** The `:password` option is
@@ -297,19 +336,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   if you want the old opt-in behaviour.
 
 - **`Akaw.Document.delete/5` and `Akaw.Attachment.delete/6` no longer let a
-  stray `rev:` in `opts` override the positional `rev` argument.** Under Req
-  0.7's param deduplication the last occurrence won, which could turn a valid
-  delete into a 409 conflict. The positional argument is now authoritative.
-
-- **A named Finch pool no longer emits a deprecation warning on every
-  request.** `Akaw.new(finch: MyApp.Finch)` and the `:pool_timeout` escape
-  hatch keep their flat spelling; Akaw translates them to Req 0.7's
-  `finch: [...]` form internally. This also removes roughly 0.3 ms of
-  `IO.warn` overhead per warning per request.
-
-  The one exception is `:pool_timeout` combined with `:connect_options`,
-  where Req raises if `:finch` is set at all — the flat spelling and its
-  warning stand there.
+  stray `rev:` in `opts` override the positional `rev` argument.** Query
+  params keep the last occurrence of a duplicated key, which could turn a
+  valid delete into a 409 conflict. The positional argument is now
+  authoritative.
 
 ### Added
 
@@ -336,4 +366,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```
 
   If you branch on transport failures, match on `body.exception` — a
-  `%Req.TransportError{reason: …}` — rather than on the `:reason` string.
+  `%Mint.TransportError{reason: …}` or Finch's wrapper of it — rather
+  than on the `:reason` string.
