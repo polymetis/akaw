@@ -97,6 +97,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the initial login grants no cookie. `create/3`'s documented fallback is
   unchanged.
 
+- **Streaming and feed requests never retry — the opt-in is gone.**
+  A per-call `retry:` now raises `ArgumentError`, and a client-level
+  `req_options: [retry: ...]` is overridden on streaming and held-open
+  paths (previously it was silently inherited — the person configuring
+  the client is not necessarily the person streaming through it). The
+  design rationale is liveness at scale: streaming exists for datasets
+  larger than RAM, and a transparent retry restarts the walk from row
+  zero with the accumulator reset and side effects re-run — when walk
+  duration approaches connection MTBF, restart-from-zero may never
+  complete while checkpoint-resume always can. Every `reduce_while`
+  doc now carries an "Interrupted walks: resume, don't retry" section
+  with the per-endpoint checkpoint recipe (`startkey`/`skip` for
+  `_all_docs`, `startkey`+`startkey_docid` for views, `since:` for
+  `_changes`, `limit`+`bookmark` paging for Mango). Held-open feed
+  requests (longpoll included) pin retry off for the additional,
+  measured reason that retrying a client-side-timed-out longpoll is
+  guaranteed to fail again while abandoning server-side connections.
+  Plain non-streaming requests keep Req's default retry.
+
 ### Fixed
 
 - **Four documented JSON-typed query params are now actually

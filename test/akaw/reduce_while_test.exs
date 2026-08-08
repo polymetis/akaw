@@ -928,53 +928,38 @@ defmodule Akaw.ReduceWhileTest do
                client
                |> Akaw.Documents.stream_all_docs("db",
                  limit: 10,
-                 retry: false,
                  receive_timeout: 90_000
                )
                |> Enum.to_list()
 
       qs = Process.get(:akaw_row_stream_qs) || ""
       assert qs =~ "limit=10"
-      refute qs =~ "retry"
       refute qs =~ "receive_timeout"
     end
 
-    @tag :capture_log
-    test "a per-call retry opt-in routes to the transport and is respected" do
-      # The whole opt-in has to survive two hazards: :retry must be
-      # routed out of the CouchDB params (or it becomes ?retry=... and
-      # CouchDB ignores it), and default_retry_off/2 must see it and
-      # stand down. Getting either wrong silently inverts the caller's
-      # intent.
-      test = self()
-      calls = :counters.new(1, [])
-      inner = flaky_once_plug(calls)
+    test "a per-call retry: raises ArgumentError pointing at the resume docs" do
+      # There is no retry opt-in on streaming paths, at any layer. A
+      # transparent retry restarts a larger-than-RAM walk from row zero
+      # with the accumulator reset — the caller needs checkpoint-resume
+      # (startkey/since), which only their code can implement. Silently
+      # ignoring the option would be worse than honoring it; raise loudly.
+      client = Akaw.new(base_url: "http://x", req_options: [plug: pretty_plug([])])
 
-      plug = fn conn ->
-        send(test, {:qs, conn.query_string})
-        inner.(conn)
+      assert_raise ArgumentError, ~r/never retry|resume/, fn ->
+        Akaw.Documents.reduce_while_all_docs(
+          client,
+          "db",
+          [],
+          fn row, acc -> {:cont, [row | acc]} end,
+          retry: :safe_transient
+        )
       end
-
-      client =
-        Akaw.new(base_url: "http://x", req_options: [plug: plug, retry_delay: fn _ -> 0 end])
-
-      assert {:ok, [%{"id" => "a"}]} =
-               Akaw.Documents.reduce_while_all_docs(
-                 client,
-                 "db",
-                 [],
-                 fn row, acc -> {:cont, [row | acc]} end,
-                 retry: :safe_transient
-               )
-
-      assert :counters.get(calls, 1) == 2
-      assert_receive {:qs, qs}
-      refute qs =~ "retry"
     end
 
-    test "an explicit client-level retry opt-in is respected" do
-      # Opting in means opting into re-delivery — but it must remain
-      # possible for idempotent reducers that prefer the restart.
+    test "a client-level retry opt-in is overridden on streaming paths" do
+      # The person who configured retry: :safe_transient on the client
+      # for their doc CRUD is not necessarily the person streaming
+      # through it — re-delivery semantics must not be inherited.
       calls = :counters.new(1, [])
 
       client =
@@ -987,12 +972,12 @@ defmodule Akaw.ReduceWhileTest do
           ]
         )
 
-      assert {:ok, [%{"id" => "a"}]} =
+      assert {:error, %Akaw.Error{status: 503}} =
                Akaw.Documents.reduce_while_all_docs(client, "db", [], fn row, acc ->
                  {:cont, [row | acc]}
                end)
 
-      assert :counters.get(calls, 1) == 2
+      assert :counters.get(calls, 1) == 1
     end
 
     test "reduce paths tag transport failures stream_transport_error" do

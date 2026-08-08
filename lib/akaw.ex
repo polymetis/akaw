@@ -116,8 +116,12 @@ defmodule Akaw do
         * `:receive_timeout` — Finch's between-chunk timeout in ms
         * `:pool_timeout` — Finch wait time to acquire a pool worker
         * `:connect_options` — TCP/TLS options Finch forwards to Mint
-        * `:retry` — Req's retry policy; streaming paths default it
-          off (see the retry note below)
+
+      Streaming and feed requests never retry — a per-call `retry:`
+      raises `ArgumentError`, and a client-level
+      `req_options: [retry: ...]` is overridden on those paths. Resume
+      interrupted walks from a checkpoint you own instead; see
+      "Interrupted walks" in the `reduce_while` docs.
 
       Anything else flows through to the endpoint as a query param —
       except on the Mango `reduce_while` variants, where the query
