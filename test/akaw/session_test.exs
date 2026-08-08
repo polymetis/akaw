@@ -184,6 +184,28 @@ defmodule Akaw.SessionTest do
       assert cookies == ["AuthSession=tok_2"]
     end
 
+    test "a 200 without Set-Cookie is a failed refresh, not a silent downgrade" do
+      # create/3's lenient fallback returns its input client unchanged — but
+      # refresh strips the cookie before re-auth, so "unchanged" would mean
+      # a client with no credentials at all. The one job of refresh is a
+      # fresh cookie; not getting one is an error.
+      reply = fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, Jason.encode!(%{"ok" => true}))
+      end
+
+      authed =
+        Akaw.new(
+          base_url: "http://x",
+          headers: [{"cookie", "AuthSession=live"}],
+          req_options: [plug: reply]
+        )
+
+      assert {:error, %Akaw.Error{status: nil, error: "no_auth_cookie"}} =
+               Akaw.Session.refresh(authed, "admin", "pw")
+    end
+
     test "strips any prior cookie before re-auth so we don't send the old AuthSession" do
       test = self()
 

@@ -66,7 +66,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   1.20, and the full suite — including the integration tests against a real
   CouchDB — passes on both the old and the new toolchain.
 
+- **`Akaw.SessionServer`'s default `:refresh_interval` is now 5 minutes**
+  (was 30). CouchDB's `AuthSession` cookie expires 10 minutes after issuance
+  by default (`[chttpd_auth] timeout`), and the server holds one cookie
+  between refreshes — with a 30-minute cadence the held cookie was dead for
+  20 of every 30 minutes on an all-default setup. Pass
+  `refresh_interval: :timer.minutes(30)` explicitly if you had raised
+  CouchDB's timeout and relied on the old cadence.
+
+- **`Akaw.Session.refresh/3` treats a 200 without `Set-Cookie` as an
+  error.** Refresh strips the old cookie before re-authenticating, so
+  `create/3`'s lenient no-cookie fallback (return the client unchanged)
+  handed back a client with no credentials at all — which
+  `Akaw.SessionServer` then installed as its state while emitting success
+  telemetry. Refresh now returns
+  `{:error, %Akaw.Error{error: "no_auth_cookie"}}`; the `SessionServer`
+  keeps its previous client on that path, and refuses to start at all if
+  the initial login grants no cookie. `create/3`'s documented fallback is
+  unchanged.
+
 ### Fixed
+
+- **A `password_fn` that raises or exits during a scheduled refresh no
+  longer crash-loops `Akaw.SessionServer`.** The `:password` option is
+  documented for deferred secret lookup (Vault, K8s secret reloaders) —
+  but an exception at refresh time killed the GenServer, and the
+  supervisor's restart re-ran the same failing function in `init/1`,
+  looping until `max_restarts` took the tree down. A transient secret-store
+  blip now takes the documented graceful path instead: the existing client
+  stays in place, the `:error` telemetry event fires (with
+  `%Akaw.Error{error: "refresh_exception"}`), and the refresh retries on
+  the usual backoff. The initial lookup at start remains let-it-crash.
 
 - **Responses are compressed again.** Req 0.6.1 made decompression opt-in, so
   Akaw silently stopped negotiating gzip. Measured against CouchDB 3.5.1 on

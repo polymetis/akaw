@@ -13,8 +13,7 @@ defmodule Akaw.SessionServer do
           name: MyApp.Couch,
           base_url: "http://localhost:5984",
           username: "admin",
-          password: System.fetch_env!("COUCHDB_PASSWORD"),
-          refresh_interval: :timer.minutes(5)}
+          password: System.fetch_env!("COUCHDB_PASSWORD")}
       ]
 
       Supervisor.start_link(children, strategy: :one_for_one)
@@ -35,19 +34,34 @@ defmodule Akaw.SessionServer do
       dumps — the state shows `password_fn: #Function<...>`. Pass a
       function if you want to defer the secret lookup (Vault, K8s
       secret reloader, etc.) to refresh time rather than start time.
+      If the function raises or exits during a *refresh* (the secret
+      store hiccups), that's treated as a failed refresh — existing
+      client kept, retry on backoff — not a crash. Only the initial
+      lookup at start is let-it-crash.
     * `:refresh_interval` — milliseconds between refresh attempts
-      (default 30 minutes, well within CouchDB's default 10-minute
-      `[chttpd_auth] timeout` × auto-renewal window).
+      (default 5 minutes). Keep this comfortably under CouchDB's
+      `[chttpd_auth] timeout` (default 10 minutes): the `AuthSession`
+      cookie hard-expires that long after issuance, and since Akaw
+      doesn't capture rotated cookies from intervening responses
+      (see `Akaw.Session`), this timer is the only thing keeping the
+      held cookie alive.
     * `:client_opts` — extra opts forwarded to `Akaw.new/1`
       (e.g. `req_options: [retry: :transient]`, `finch: MyApp.Finch`).
 
   ## On failure
 
   If the initial login fails, the GenServer crashes — the supervisor
-  decides whether to retry. If a *refresh* fails after a successful
+  decides whether to retry. A 200 that grants no `AuthSession` cookie
+  counts as failure: this server exists to hold a cookie, so it refuses
+  to start without one. If a *refresh* fails after a successful
   initial login, the existing client stays in place and we retry on a
   short backoff (60s or the configured interval, whichever is smaller).
   Callers continue to see the most recent good client.
+
+  One caveat for laptops and suspendable VMs: the refresh timer counts
+  monotonic time, which stands still while the host sleeps. After a
+  suspend longer than the cookie lifetime, the server serves an expired
+  cookie until the next scheduled refresh fires.
 
   ## Telemetry
 
@@ -68,9 +82,9 @@ defmodule Akaw.SessionServer do
   use GenServer
   require Logger
 
-  alias Akaw.Session
+  alias Akaw.{Error, Session}
 
-  @default_interval :timer.minutes(30)
+  @default_interval :timer.minutes(5)
   @retry_backoff :timer.seconds(60)
 
   @doc "Start a SessionServer under a supervisor. See moduledoc for options."
@@ -103,7 +117,11 @@ defmodule Akaw.SessionServer do
 
     base_client = Akaw.new([base_url: base_url] ++ client_opts)
 
-    case Session.create(base_client, username, password_fn.()) do
+    # Session.refresh/3 rather than create/3: refresh enforces that an
+    # AuthSession cookie actually came back, which is this server's whole
+    # reason to exist. On the cookie-less base_client the strip is a no-op,
+    # so the request itself is identical.
+    case Session.refresh(base_client, username, password_fn.()) do
       {:ok, authed, _body} ->
         schedule_refresh(interval)
 
@@ -154,7 +172,7 @@ defmodule Akaw.SessionServer do
     metadata = %{name: state.name}
     start = System.monotonic_time()
 
-    case Session.refresh(state.client, state.username, state.password_fn.()) do
+    case attempt_refresh(state) do
       {:ok, new_client, _body} ->
         :telemetry.execute(
           [:akaw, :session_server, :refresh, :ok],
@@ -178,6 +196,32 @@ defmodule Akaw.SessionServer do
 
         err
     end
+  end
+
+  # A raise or exit escaping `password_fn` (a Vault hiccup, a timed-out
+  # secret-store call) must not escape do_refresh: the moduledoc promises
+  # that after a successful login a failed refresh keeps the existing
+  # client and retries — and an escape here would crash-loop through the
+  # supervisor, whose restarts re-run the same raising function in init.
+  # Only init is let-it-crash.
+  defp attempt_refresh(state) do
+    Session.refresh(state.client, state.username, state.password_fn.())
+  rescue
+    exception ->
+      {:error,
+       %Error{
+         error: "refresh_exception",
+         reason: Exception.message(exception),
+         body: %{exception: exception, stacktrace: __STACKTRACE__}
+       }}
+  catch
+    kind, value ->
+      {:error,
+       %Error{
+         error: "refresh_exception",
+         reason: "#{kind}: #{inspect(value)}",
+         body: %{exception: {kind, value}, stacktrace: __STACKTRACE__}
+       }}
   end
 
   defp schedule_refresh(interval) do
