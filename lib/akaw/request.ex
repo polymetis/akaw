@@ -490,7 +490,7 @@ defmodule Akaw.Request do
     end
   end
 
-  defp inflate(response, false) do
+  defp inflate(%Finch.Response{} = response, false) do
     {:ok, %Finch.Response{response | headers: drop_encoding_headers(response.headers)}}
   end
 
