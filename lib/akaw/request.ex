@@ -228,17 +228,13 @@ defmodule Akaw.Request do
   @idempotent_methods ["GET", "HEAD"]
 
   defp run_with_retry(finch_request, pool, finch_opts, retry?) do
-    case Finch.request(finch_request, pool, finch_opts) do
+    case run_finch(finch_request, pool, finch_opts) do
       {:error, exception} = error ->
         if retry? and finch_request.method in @idempotent_methods and
              closed_socket?(exception) do
-          Logger.warning(
-            "akaw: retrying #{finch_request.method} #{finch_request.path} once — " <>
-              "pooled connection closed mid-request (keep-alive race): " <>
-              Exception.message(exception)
-          )
-
-          Finch.request(finch_request, pool, finch_opts)
+          retry_warning(finch_request, exception)
+          emit_retry_telemetry(finch_request, pool)
+          run_finch(finch_request, pool, finch_opts)
         else
           error
         end
@@ -246,6 +242,72 @@ defmodule Akaw.Request do
       ok ->
         ok
     end
+  end
+
+  # Finch reports checkout exhaustion by RAISING (its pool catches the
+  # NimblePool exit and reraises a RuntimeError) — which would break the
+  # {:error, %Akaw.Error{}} contract at exactly the moment, overload,
+  # when callers most need the documented shape. Classified here rather
+  # than retried: retrying against a saturated pool only amplifies the
+  # saturation, and closed_socket?/1 never matches a RuntimeError.
+  # Anything else (ArgumentError from bad construction, exits from a
+  # dead pool, unrelated RuntimeErrors) propagates — those are
+  # programmer errors and supervision-level events respectively.
+  defp run_finch(finch_request, pool, finch_opts) do
+    Finch.request(finch_request, pool, finch_opts)
+  rescue
+    exception in RuntimeError ->
+      if pool_exhaustion?(exception) do
+        {:error, exception}
+      else
+        reraise(exception, __STACKTRACE__)
+      end
+  end
+
+  @doc false
+  # The message guard identifying Finch's checkout-exhaustion raise —
+  # shared with Akaw.Streaming, where the guard is load-bearing (user
+  # reducers run inside stream_while and can raise RuntimeErrors of
+  # their own). Pinned by a saturation test against real Finch so a
+  # wording change upstream fails loudly.
+  def pool_exhaustion?(%RuntimeError{message: message}) do
+    String.contains?(message, "unable to provide a connection")
+  end
+
+  def pool_exhaustion?(_other), do: false
+
+  # The moment this line matters is a CouchDB restart, when every pooled
+  # connection goes stale at once and the bursts arrive from *somewhere*
+  # — so it names which somewhere, and carries metadata for filtering.
+  defp retry_warning(finch_request, exception) do
+    Logger.warning(
+      "akaw: retrying #{finch_request.method} #{url_for_log(finch_request)} once — " <>
+        "pooled connection closed mid-request (keep-alive race): " <>
+        Exception.message(exception),
+      akaw_host: finch_request.host,
+      akaw_port: finch_request.port,
+      akaw_method: finch_request.method
+    )
+  end
+
+  # "Observable rather than silent" should hold for machines too:
+  # counting keep-alive races beats scraping logs.
+  defp emit_retry_telemetry(finch_request, pool) do
+    :telemetry.execute(
+      [:akaw, :request, :retry],
+      %{count: 1},
+      %{
+        host: finch_request.host,
+        port: finch_request.port,
+        method: finch_request.method,
+        path: finch_request.path,
+        pool: pool
+      }
+    )
+  end
+
+  defp url_for_log(finch_request) do
+    "#{finch_request.scheme}://#{finch_request.host}:#{finch_request.port}#{finch_request.path}"
   end
 
   # Finch 0.23 wraps Mint's exception (%Finch.TransportError{reason:
@@ -273,6 +335,20 @@ defmodule Akaw.Request do
       {:ok, response} -> decode_and_wrap(response, return_kind)
       {:error, _} = error -> error
     end
+  end
+
+  # The rescued checkout-exhaustion raise (see run_finch/3). Its own tag,
+  # not "transport_error": the network is fine — the client-side pool is
+  # saturated, and the remedies (bigger pool, fewer concurrent calls,
+  # longer :pool_timeout) are different in kind from transport remedies.
+  defp handle_response({:error, %RuntimeError{} = exception}, _return_kind, _method) do
+    {:error,
+     %Error{
+       status: nil,
+       error: "pool_timeout",
+       reason: Exception.message(exception),
+       body: %{exception: exception}
+     }}
   end
 
   defp handle_response({:error, exception}, _return_kind, _method),

@@ -195,6 +195,66 @@ defmodule Akaw.RequestTest do
       refute log =~ "retrying"
     end
 
+    test "pool exhaustion is {:error, pool_timeout}, not a raise — plain and reduce paths" do
+      # A size-1 pool, one connection parked in a slow request, and a
+      # 50ms checkout budget for the second: Finch reports this by
+      # RAISING, which would break the {:error, %Akaw.Error{}} contract
+      # at exactly the moment callers most need it. This also pins the
+      # message guard against real Finch — if a Finch bump rewords the
+      # exhaustion raise, this test fails before the misclassification
+      # ships.
+      test_pid = self()
+
+      plug = fn conn ->
+        send(test_pid, :occupied)
+        Process.sleep(2_000)
+        Loopback.json(conn, %{})
+      end
+
+      pool = :"akaw_saturation_test_finch_#{System.unique_integer([:positive])}"
+
+      start_supervised!({Finch, name: pool, pools: %{default: [size: 1, count: 1]}},
+        id: make_ref()
+      )
+
+      client = Akaw.new(base_url: Loopback.url(plug), finch: pool)
+
+      occupant = Task.async(fn -> Request.request(client, :get, "/slow") end)
+      assert_receive :occupied, 2_000
+
+      assert {:error, %Akaw.Error{error: "pool_timeout", status: nil} = plain_error} =
+               Request.request(client, :get, "/", pool_timeout: 50)
+
+      assert plain_error.reason =~ "unable to provide a connection"
+
+      assert {:error, %Akaw.Error{error: "pool_timeout"}} =
+               Akaw.Documents.reduce_while_all_docs(
+                 client,
+                 "db",
+                 [],
+                 fn row, acc -> {:cont, [row | acc]} end,
+                 pool_timeout: 50
+               )
+
+      Task.await(occupant, 5_000)
+    end
+
+    test "a reducer's own RuntimeError propagates — never misread as pool exhaustion" do
+      plug = fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, ~s({"total_rows":1,"offset":0,"rows":[\n{"id":"a"}\n]}))
+      end
+
+      client = Loopback.client(plug)
+
+      assert_raise RuntimeError, "reducer bug", fn ->
+        Akaw.Documents.reduce_while_all_docs(client, "db", [], fn _row, _acc ->
+          raise "reducer bug"
+        end)
+      end
+    end
+
     test "retry: false disables even the keep-alive-race retry" do
       port = close_first_then_serve()
 

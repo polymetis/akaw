@@ -634,16 +634,48 @@ defmodule Akaw.Streaming do
       {:trailers, _trailers}, state -> {:cont, state}
     end
 
-    case Finch.stream_while(finch_request, pool, initial_state, stream_fun, finch_opts) do
+    case run_finch_stream(finch_request, pool, initial_state, stream_fun, finch_opts) do
       {:ok, %{status: status} = state} when status in 200..299 ->
         {:ok, state}
 
       {:ok, state} ->
         {:error, error_from_state(state)}
 
+      {:error, %RuntimeError{} = exception, _state} ->
+        # The rescued checkout-exhaustion raise (see run_finch_stream/5):
+        # the pool is saturated, not the network — same tag as the plain
+        # path so operators see one signal for one condition.
+        {:error,
+         %Error{
+           status: nil,
+           error: "pool_timeout",
+           reason: Exception.message(exception),
+           body: %{exception: exception}
+         }}
+
       {:error, exception, _state} ->
         {:error, stream_transport_error(exception)}
     end
+  end
+
+  # Finch reports checkout exhaustion by raising; the reduce API
+  # promises {:ok, acc} | {:error, %Akaw.Error{}}, so that raise is
+  # rescued into the error channel. The message guard is load-bearing,
+  # not cosmetic: the user's reducer runs INSIDE stream_while, and a
+  # reducer's `raise "boom"` is a RuntimeError too — type alone would
+  # misclassify user bugs as pool saturation. Everything that isn't the
+  # exhaustion raise propagates untouched. (The message match is pinned
+  # by a saturation test against real Finch, so a Finch wording change
+  # fails loudly there rather than silently here.)
+  defp run_finch_stream(finch_request, pool, initial_state, stream_fun, finch_opts) do
+    Finch.stream_while(finch_request, pool, initial_state, stream_fun, finch_opts)
+  rescue
+    exception in RuntimeError ->
+      if Akaw.Request.pool_exhaustion?(exception) do
+        {:error, exception, initial_state}
+      else
+        reraise(exception, __STACKTRACE__)
+      end
   end
 
   defp handle_data(chunk, %{status: status} = state, on_data) when status in 200..299 do
