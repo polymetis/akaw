@@ -98,7 +98,7 @@ defmodule Akaw.Request do
     finch_request =
       Finch.build(
         method,
-        client.base_url <> path <> query_suffix(params),
+        build_url(client.base_url, path, params),
         headers,
         body,
         build_options
@@ -146,18 +146,27 @@ defmodule Akaw.Request do
   # One value per key, later occurrence winning — the same semantics
   # Req 0.7 applied (and Akaw's CHANGELOG documented), now implemented
   # here. Spaces encode as `+` (www-form), which CouchDB decodes.
-  defp query_suffix([]), do: ""
+  #
+  # A path can carry its own query string (only `DesignDoc.Rewrites`
+  # passes user paths verbatim): `:params` MERGE into it, same-named
+  # keys overriding, never a second `?`. With no `:params` at all the
+  # path goes to the wire untouched — no decode/encode round-trip.
+  defp build_url(base_url, path, []), do: base_url <> path
 
-  defp query_suffix(params) do
-    encoded =
-      params
-      |> Enum.reduce([], fn {name, value}, deduped ->
+  defp build_url(base_url, path, params) do
+    {bare_path, existing_pairs} =
+      case :binary.split(path, "?") do
+        [bare] -> {bare, []}
+        [bare, query] -> {bare, Enum.to_list(URI.query_decoder(query))}
+      end
+
+    merged =
+      Enum.reduce(params, existing_pairs, fn {name, value}, deduped ->
         name = to_string(name)
         List.keystore(deduped, name, 0, {name, value})
       end)
-      |> URI.encode_query()
 
-    "?" <> encoded
+    base_url <> bare_path <> "?" <> URI.encode_query(merged)
   end
 
   # Bodies are encoded with the OTP-native JSON module. Mirrors the

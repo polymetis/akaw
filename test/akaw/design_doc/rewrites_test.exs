@@ -72,6 +72,30 @@ defmodule Akaw.DesignDoc.RewritesTest do
     assert JSON.decode!(body) == %{"name" => "x"}
   end
 
+  test "call/5 merges :params into a query the path already carries", %{client: client} do
+    # The documented contract: :params override same-named parameters in
+    # the rewrite path rather than appending — and never produce a
+    # second "?". (This regressed silently in the transport swap's first
+    # cut; the URL came out as ...?limit=5?limit=10.)
+    assert {:ok, _} =
+             Akaw.DesignDoc.Rewrites.call(client, "db", "d", "search?limit=5&skip=2",
+               params: [limit: 10]
+             )
+
+    assert_receive %{path: "/db/_design/d/_rewrite/search", query_string: qs}
+    decoded = URI.decode_query(qs)
+    assert decoded["limit"] == "10"
+    assert decoded["skip"] == "2"
+    refute qs =~ "?"
+  end
+
+  test "call/5 leaves a path-embedded query untouched when there are no :params", %{
+    client: client
+  } do
+    assert {:ok, _} = Akaw.DesignDoc.Rewrites.call(client, "db", "d", "search?q=a%20b")
+    assert_receive %{path: "/db/_design/d/_rewrite/search", query_string: "q=a%20b"}
+  end
+
   test "call/5 with :params", %{client: client} do
     assert {:ok, _} =
              Akaw.DesignDoc.Rewrites.call(client, "db", "d", "search",
