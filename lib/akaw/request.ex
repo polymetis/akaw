@@ -330,10 +330,20 @@ defmodule Akaw.Request do
     decode_and_wrap(%Finch.Response{response | body: ""}, return_kind)
   end
 
-  defp handle_response({:ok, %Finch.Response{} = response}, return_kind, _method) do
+  defp handle_response({:ok, %Finch.Response{status: status} = response}, return_kind, _method) do
     case decompress(response) do
-      {:ok, response} -> decode_and_wrap(response, return_kind)
-      {:error, _} = error -> error
+      {:ok, response} ->
+        decode_and_wrap(response, return_kind)
+
+      {:error, _decode_error} = error when status in 200..299 ->
+        error
+
+      {:error, _decode_error} ->
+        # Same posture as a corrupt JSON error body: the status is the
+        # signal, the (still-compressed) bytes are garnish. Collapsing a
+        # 502-with-broken-gzip into a status-less decode_error would
+        # hide the 5xx from exactly the callers branching on it.
+        {:error, build_error(status, response.body)}
     end
   end
 
@@ -394,7 +404,8 @@ defmodule Akaw.Request do
   # retry-on-transport pattern must not spin on a permanently corrupt
   # endpoint (a proxy truncating responses, a misbehaving middlebox).
   defp decode_body(%Finch.Response{body: body} = response) do
-    if json_content_type?(response.headers) and body not in [nil, ""] do
+    if json_content_type?(response.headers) and body not in [nil, ""] and
+         content_codings(response.headers) == [] do
       {:ok, JSON.decode!(body)}
     else
       {:ok, body}
@@ -425,33 +436,66 @@ defmodule Akaw.Request do
   end
 
   # gzip is the only encoding akaw ever advertises, so it's the only one
-  # handled. The content-encoding/content-length headers describe bytes
-  # that no longer exist after inflation and are dropped with them. A
-  # body that fails to inflate classifies like any other corrupt payload.
+  # handled — but per RFC 9110 the coding tokens are case-insensitive
+  # and the header is a comma-separated list, so "Gzip" and
+  # "gzip, identity" from an intermediary must still inflate. An
+  # encoding akaw can't undo leaves the body (and the content-encoding
+  # header) untouched, which also blocks the JSON decode gate — encoded
+  # bytes must never reach the parser. After inflation the
+  # content-encoding/content-length headers describe bytes that no
+  # longer exist and are dropped with them.
   defp decompress(%Finch.Response{} = response) do
-    case header_value(response.headers, "content-encoding") do
-      encoding when encoding in ["gzip", "x-gzip"] ->
-        inflated = :zlib.gunzip(response.body)
-
-        headers =
-          Enum.reject(response.headers, fn {name, _value} ->
-            String.downcase(name) in ["content-encoding", "content-length"]
-          end)
-
-        {:ok, %Finch.Response{response | body: inflated, headers: headers}}
-
-      _ ->
+    case content_codings(response.headers) do
+      [] ->
         {:ok, response}
+
+      codings ->
+        if Enum.all?(codings, &(&1 in ["gzip", "x-gzip", "identity"])) do
+          inflate(response, "gzip" in codings or "x-gzip" in codings)
+        else
+          {:ok, response}
+        end
     end
+  end
+
+  defp inflate(response, false) do
+    {:ok, %Finch.Response{response | headers: drop_encoding_headers(response.headers)}}
+  end
+
+  defp inflate(%Finch.Response{status: status} = response, true) do
+    inflated = :zlib.gunzip(response.body)
+
+    {:ok,
+     %Finch.Response{response | body: inflated, headers: drop_encoding_headers(response.headers)}}
   rescue
     _corrupt in ErlangError ->
       {:error,
        %Error{
          status: nil,
          error: "decode_error",
-         reason: "response declared content-encoding gzip but failed to inflate",
+         reason: "HTTP #{status} response declared content-encoding gzip but failed to inflate",
          body: %{}
        }}
+  end
+
+  defp content_codings(headers) do
+    case header_value(headers, "content-encoding") do
+      nil ->
+        []
+
+      value ->
+        value
+        |> String.downcase()
+        |> String.split(",")
+        |> Enum.map(&String.trim/1)
+        |> Enum.reject(&(&1 == ""))
+    end
+  end
+
+  defp drop_encoding_headers(headers) do
+    Enum.reject(headers, fn {name, _value} ->
+      String.downcase(name) in ["content-encoding", "content-length"]
+    end)
   end
 
   defp header_value(headers, name) do

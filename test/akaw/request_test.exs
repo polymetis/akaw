@@ -120,6 +120,78 @@ defmodule Akaw.RequestTest do
       assert encodings =~ "gzip"
     end
 
+    test "a corrupt gzip body on a 2xx is a decode_error" do
+      plug = fn conn ->
+        conn
+        |> Plug.Conn.put_resp_header("content-encoding", "gzip")
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, "definitely not gzip")
+      end
+
+      assert {:error, %Akaw.Error{status: nil, error: "decode_error", reason: reason}} =
+               Request.request(client_with(plug), :get, "/")
+
+      assert reason =~ "failed to inflate"
+    end
+
+    test "a corrupt gzip body on a 5xx keeps its status — the status is the signal" do
+      # A proxy answering 502 with a broken gzip body: collapsing this
+      # into a status-less decode_error would hide the 5xx from exactly
+      # the callers branching on it.
+      plug = fn conn ->
+        conn
+        |> Plug.Conn.put_resp_header("content-encoding", "gzip")
+        |> Plug.Conn.send_resp(502, "")
+      end
+
+      assert {:error, %Akaw.Error{status: 502}} =
+               Request.request(client_with(plug), :get, "/")
+    end
+
+    test "content codings are case-insensitive comma-lists; x-gzip counts" do
+      plug = fn conn ->
+        conn
+        |> Plug.Conn.put_resp_header("content-encoding", "X-Gzip, identity")
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, :zlib.gzip(~s({"ok":true})))
+      end
+
+      assert {:ok, %{"ok" => true}} = Request.request(client_with(plug), :get, "/")
+    end
+
+    test "an encoding akaw can't undo comes back raw and undecoded" do
+      # Encoded bytes must never reach the JSON parser; the caller gets
+      # the bytes and the intact content-encoding header to deal with.
+      plug = fn conn ->
+        conn
+        |> Plug.Conn.put_resp_header("content-encoding", "br")
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, "brotli-bytes-untouched")
+      end
+
+      assert {:ok, response} =
+               Request.request(client_with(plug), :get, "/", return: :response)
+
+      assert response.body == "brotli-bytes-untouched"
+      assert {"content-encoding", "br"} in response.headers
+    end
+
+    test "inflation drops the headers describing the compressed bytes" do
+      plug = fn conn ->
+        conn
+        |> Plug.Conn.put_resp_header("content-encoding", "gzip")
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, :zlib.gzip(~s({"ok":true})))
+      end
+
+      assert {:ok, response} =
+               Request.request(client_with(plug), :get, "/", return: :response)
+
+      header_names = for {name, _} <- response.headers, do: String.downcase(name)
+      refute "content-encoding" in header_names
+      refute "content-length" in header_names
+    end
+
     test "a caller can still turn compression off per call" do
       test = self()
 
