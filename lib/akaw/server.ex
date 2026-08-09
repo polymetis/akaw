@@ -168,6 +168,15 @@ defmodule Akaw.Server do
   Returns `{:ok, final_acc}` or `{:error, %Akaw.Error{}}`. A feed line
   that fails to decode raises `%Akaw.Error{error: "stream_decode_error"}`
   out of the reducer loop.
+
+  ## Interrupted walks: resume, don't retry
+
+  A transport failure mid-feed returns `{:error, %Akaw.Error{}}` and
+  the accumulator is lost — keep your checkpoint in caller-owned
+  storage, never the accumulator. `_db_updates` resumes like `_changes`:
+  store the `"seq"` of each processed event and reopen with
+  `since: last_seq` (at-least-once — events around the failure may be
+  re-delivered).
   """
   @spec reduce_while_db_updates(
           Client.t(),

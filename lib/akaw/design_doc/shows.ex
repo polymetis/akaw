@@ -15,8 +15,10 @@ defmodule Akaw.DesignDoc.Shows do
   ## Response type
 
   The result type depends entirely on what the show function returns:
-  Req auto-decodes responses with a JSON content-type into maps, and
-  leaves everything else as a binary. Either lands in `{:ok, body}`.
+  akaw decodes bodies the response declares as exactly
+  `application/json` into maps (structured suffixes like `+json` come
+  back raw), and leaves everything else as a binary. Either lands in
+  `{:ok, body}`.
 
   See <https://docs.couchdb.org/en/latest/api/ddoc/render.html#db-design-design-doc-show-show-name>.
   """

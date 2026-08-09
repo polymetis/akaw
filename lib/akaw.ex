@@ -60,10 +60,25 @@ defmodule Akaw do
   supervision tree and pass its name:
 
       children = [
-        {Finch, name: MyApp.Finch, pools: %{default: [size: 50]}}
+        {Finch, name: MyApp.Finch, pools: %{default: [size: 200]}}
       ]
 
       client = Akaw.new(base_url: "http://localhost:5984", finch: MyApp.Finch)
+
+  Name your pool anything but `Akaw.Finch` — akaw's application starts
+  first as a dependency, so a consumer-supervised copy of that name
+  fails at boot with `:already_started`. And if a request raises
+  `ArgumentError: unknown registry: Akaw.Finch`, the `:akaw` application
+  isn't running (a script, `mix run --no-start`, `runtime: false`) —
+  start it, or pass your own pool.
+
+  When the pool saturates — every connection busy and `:pool_timeout`
+  (default 5s) exhausted — plain requests and the `reduce_while` family
+  return `{:error, %Akaw.Error{error: "pool_timeout"}}`. The lazy
+  streams can't: the failure happens in the transport's linked helper
+  process and arrives as an exit (or, for a process trapping exits, an
+  `:EXIT` message followed by the stream's own idle timeout). Watch
+  `[:finch, :queue, :exception]` telemetry to see saturation coming.
 
   ## Notes & gotchas
 
@@ -124,7 +139,7 @@ defmodule Akaw do
 
       Connection-level options (TLS for self-signed CouchDB, proxies)
       are configured on a named Finch pool, not per call — see
-      "Connection pooling" below.
+      "Connection pooling" above.
 
       Streaming and feed requests never retry — a per-call `retry:`
       raises `ArgumentError`, and a client-level
@@ -149,7 +164,9 @@ defmodule Akaw do
       `status: nil` and stash the underlying Mint/Finch exception in
       `body.exception` for the curious — tagged `"transport_error"` on
       plain requests and `"stream_transport_error"` on the streaming
-      APIs. See `Akaw.Error` for the full inventory of shapes.
+      APIs; a saturated connection pool is `"pool_timeout"` (see
+      "Connection pooling" for the one exception, the lazy streams).
+      See `Akaw.Error` for the full inventory of shapes.
   """
 
   alias Akaw.Client

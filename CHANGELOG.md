@@ -31,7 +31,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     * **Retry is akaw's documented policy** — see the retry entry below.
     * The `:finch` client option and the `:pool_timeout` /
       `:receive_timeout` escape hatches keep their exact spellings —
-      they are native now, not translated.
+      they are native now, not translated. The keyword form of `:finch`
+      validates loudly: it takes exactly `:name` and `:pool_tag`, and
+      anything else (a `:pool_size` that would have been silently
+      dropped) raises with a pointer to where pool sizing actually
+      lives.
+    * **Pool saturation is `{:error, %Akaw.Error{error: "pool_timeout"}}`**
+      on plain requests and the `reduce_while` family (the transport
+      reports it by raising; akaw classifies it). The lazy streams
+      can't intercept it — see "Connection pooling" in the docs for
+      their failure shape and the telemetry to watch.
+    * **An explicit `authorization` header now beats client-level
+      `:auth`** (Req unconditionally overwrote it) — consistent with
+      the header rule that the more specific occurrence wins.
+    * **Credentials with control characters are rejected at
+      `Akaw.new/1`**, loudly and redacted — a bearer token with a
+      trailing newline previously surfaced through the transport's
+      header validation with the full token echoed into the error.
+    * **`compressed: false` strips even an explicit `accept-encoding`
+      header** — it means "this response must arrive plain", which is
+      what the streaming paths' unconditional pin relies on.
 
 - **Retry is one failure class, once, loudly.** Plain requests retry
   exactly one thing: the pooled keep-alive race — the server closing a

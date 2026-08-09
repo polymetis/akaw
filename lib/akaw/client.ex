@@ -16,8 +16,9 @@ defmodule Akaw.Client do
     * `:auth` — basic-auth password or bearer token.
     * `:headers` — the `AuthSession` cookie after cookie login, or any
       `Authorization` header you set yourself.
-    * `:req_options` — nested `:headers` can carry cookies (`:auth` inside
-  `req_options` is rejected at construction since the allowlist).
+    * `:req_options` — nested `:headers` can carry cookies. (`:auth` is
+      not on the `:req_options` allowlist, so it's rejected at
+      construction — prevention superseded redaction there.)
 
   The allowlist fails closed: a field added to the struct later stays hidden
   until it's explicitly added to `:only`.

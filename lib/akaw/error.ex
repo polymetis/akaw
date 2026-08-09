@@ -36,6 +36,14 @@ defmodule Akaw.Error do
       with `%{exception: original_exception}`, same as the transport case
       above.
 
+    * **Pool saturation** — every connection busy and `:pool_timeout`
+      exhausted: `status` is `nil`, `error` is `"pool_timeout"`, `body`
+      is `%{exception: e}`. Its own tag, not `"transport_error"`: the
+      network is fine — the client-side pool is undersized for the
+      concurrency, and the remedies differ in kind. Plain requests and
+      the `reduce_while` family return it; the lazy streams can't (see
+      "Connection pooling" in the `Akaw` docs).
+
     * **Broken auth contracts** — `status` is `nil`, `error` is
       `"no_auth_cookie"` (a re-auth answer granted no `AuthSession`
       cookie — see `Akaw.Session.refresh/3`) or `"refresh_exception"`

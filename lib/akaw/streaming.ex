@@ -18,12 +18,27 @@ defmodule Akaw.Streaming do
   #     (b) blocking in the reducer stalls socket reads and applies real
   #     TCP backpressure to CouchDB.
   #
+  # The backpressure claim is an HTTP/1 fact. A caller-supplied Finch
+  # pool configured for HTTP/2 has NO flow control on streams (Finch's
+  # own docs box-warn against h2 for non-terminating responses) —
+  # streaming endpoints require an HTTP/1 pool, which is also all
+  # CouchDB speaks. Two cost notes: every early `:halt` closes the
+  # pooled connection (HTTP/1 can't abandon a half-read body), so a
+  # halt-after-N-rows pattern pays a reconnect per call; and on a
+  # transport failure the accumulator is LOST — the error tuple carries
+  # no acc. That's by design: checkpoints live in caller-owned storage,
+  # never the accumulator (see "resume, don't retry" below).
+  #
   # ## Retry: off, structurally — resume is the caller's job
   #
   # Streaming and held-open requests NEVER retry: these paths contain no
   # retry code at all, and there is no opt-in at any layer (a per-call
   # `retry:` raises; a client-level `req_options[:retry]` applies only to
-  # plain requests). Two reasons, both from the design record:
+  # plain requests). The transport underneath keeps that promise too:
+  # Finch's one internal retry (:read_only, HTTP/2 pool draining) fires
+  # strictly before any response part flows and can't occur on an
+  # HTTP/1 pool at all — delivery-once holds through it either way.
+  # Two reasons, both from the design record:
   #
   # 1. Correctness: body already consumed before a failure has already
   #    been fed to the caller; a retried attempt would reset the
@@ -51,12 +66,13 @@ defmodule Akaw.Streaming do
   # ## chunks/4 — idle timeout
   #
   # `next_chunk/1` does a selective `receive` with an `after` clause
-  # keyed on the `:idle_timeout` opt (default 5 minutes). If no part
-  # arrives within that window the stream raises `%Akaw.Error{}` —
-  # guards against silent stalls where a load balancer or NAT has
-  # dropped a connection and TCP hasn't noticed. For `_changes` feeds,
-  # set this to slightly more than your `:heartbeat` so heartbeats
-  # always reset the clock.
+  # keyed on the `:idle_timeout` opt (default 5 minutes). On the feed
+  # paths the transport's `:receive_timeout` (auto-derived from the
+  # heartbeat) fires first and surfaces as a transport error — the idle
+  # clock is really a dead-man's switch on the request process itself,
+  # the guard for stalls the socket timeout can't see. Tune
+  # `:receive_timeout` for connection quietness; leave `:idle_timeout`
+  # for the pathological case.
   #
   # ## chunks/4 — mailbox behavior
   #
@@ -70,12 +86,23 @@ defmodule Akaw.Streaming do
   # closed (Stream.resource does this) or its messages linger. Prefer
   # `reduce_*_while` from anything with a long-lived mailbox.
   #
+  # Two honest edges for long-lived consumers. The close-time flush is
+  # best-effort: cancellation is an async exit signal, so one in-flight
+  # part can land after `close/1` returns and sit in the mailbox as a
+  # stray `{ref, part}`. And the transport's helper process is LINKED to
+  # the consumer: a process trapping exits sees `{:EXIT, _, :normal}`
+  # after a fully-consumed stream, and an abnormal helper death (pool
+  # checkout exhaustion included) kills a non-trapping consumer outright
+  # — the reduce API classifies that same condition as
+  # {:error, "pool_timeout"}; this one can't.
+  #
   # ## chunks/4 — open errors
   #
   # The `start_fun` raises `Akaw.Error` in both cases:
   #
-  #   * HTTP non-2xx — the async body is drained once and decoded to
-  #     extract CouchDB's `error` / `reason` into the struct.
+  #   * HTTP non-2xx — the async body is drained once (capped at
+  #     @max_error_body, hard deadline) and decoded to extract CouchDB's
+  #     `error` / `reason` into the struct.
   #   * Transport failure — `error: "stream_transport_error"` with the
   #     underlying exception in `body.exception`, the same shape as a
   #     mid-stream failure. One tag per API mode: every transport
