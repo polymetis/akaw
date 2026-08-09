@@ -135,6 +135,26 @@ defmodule AkawTest do
     end
   end
 
+  describe "new/1 finch validation" do
+    test "the keyword form takes exactly :name and :pool_tag" do
+      error =
+        assert_raise ArgumentError, fn ->
+          Akaw.new(base_url: "http://x", finch: [name: MyApp.Finch, pool_size: 100])
+        end
+
+      # The rejection must teach where sizing actually lives — silently
+      # dropping :pool_size would run on default sizing until saturation.
+      assert error.message =~ ":pool_size"
+      assert error.message =~ "pools: %{default: [size: 100]}"
+    end
+
+    test "a non-atom, non-keyword :finch raises" do
+      assert_raise ArgumentError, ~r/pool name \(atom\) or a keyword list/, fn ->
+        Akaw.new(base_url: "http://x", finch: "MyApp.Finch")
+      end
+    end
+  end
+
   describe "new/1 req_options validation" do
     test "req_options rejects unknown keys with the named allowlist" do
       error =

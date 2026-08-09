@@ -204,16 +204,84 @@ defmodule Akaw.RequestTest do
       assert_receive {:accept_encoding, []}
     end
 
-    test "a flat :pool_timeout is folded into finch: [...] rather than deprecated" do
-      plug = fn conn -> Loopback.json(conn, %{}) end
+    test "compressed: false strips even an explicit accept-encoding header" do
+      # Its one load-bearing use is the streaming paths' unconditional
+      # pin: chunk parsers must never see gzip bytes, including via a
+      # client-level literal header.
+      test = self()
 
-      stderr =
-        ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          assert {:ok, _} =
-                   Request.request(client_with(plug), :get, "/", pool_timeout: 5_000)
-        end)
+      plug = fn conn ->
+        send(test, {:accept_encoding, Plug.Conn.get_req_header(conn, "accept-encoding")})
+        Loopback.json(conn, %{})
+      end
 
-      refute stderr =~ "deprecated"
+      client = client_with(plug, headers: [{"accept-encoding", "gzip"}])
+      assert {:ok, _} = Request.request(client, :get, "/", compressed: false)
+      assert_receive {:accept_encoding, []}
+    end
+
+    test "streaming paths shed a client-level accept-encoding header" do
+      seen = :ets.new(:akaw_stream_accept_encoding, [:public])
+
+      plug = fn conn ->
+        :ets.insert(seen, {:accept_encoding, Plug.Conn.get_req_header(conn, "accept-encoding")})
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, ~s({"total_rows":0,"offset":0,"rows":[\n]}))
+      end
+
+      client = Loopback.client(plug, headers: [{"accept-encoding", "gzip"}])
+
+      assert {:ok, 0} =
+               Akaw.Documents.reduce_while_all_docs(client, "db", 0, fn _, n -> {:cont, n + 1} end)
+
+      assert [{:accept_encoding, []}] = :ets.lookup(seen, :accept_encoding)
+    end
+
+    test "prepared/4 forwards the transport escape hatches as Finch request options" do
+      client = Akaw.new(base_url: "http://x")
+
+      {_request, _pool, finch_opts, _retry} =
+        Request.prepared(client, :get, "/", pool_timeout: 5_000, receive_timeout: 30_000)
+
+      assert finch_opts[:pool_timeout] == 5_000
+      assert finch_opts[:receive_timeout] == 30_000
+    end
+
+    test "prepared/4 forwards the keyword finch form: pool name and pool_tag" do
+      # Finch silently falls back to the :default pool config for an
+      # unknown tag, so the integration suite alone can't catch a
+      # dropped tag — this pins the forwarding exactly.
+      client = Akaw.new(base_url: "http://x", finch: [name: SomePool, pool_tag: :bulk])
+
+      {request, pool, _finch_opts, _retry} = Request.prepared(client, :get, "/", [])
+
+      assert pool == SomePool
+      assert request.pool_tag == :bulk
+    end
+
+    test "an unknown request option raises with the inventory" do
+      client = Akaw.new(base_url: "http://x")
+
+      error =
+        assert_raise ArgumentError, fn ->
+          Request.request(client, :get, "/", follow_redirects: true)
+        end
+
+      assert error.message =~ "unknown request option(s): [:follow_redirects]"
+      assert error.message =~ "closed surface"
+    end
+
+    test "a per-call function-valued :retry raises instead of silently meaning enabled" do
+      client = Akaw.new(base_url: "http://x")
+
+      error =
+        assert_raise ArgumentError, fn ->
+          Request.request(client, :get, "/", retry: fn _, _ -> false end)
+        end
+
+      assert error.message =~ ":safe_transient"
     end
 
     test "a 503 surfaces immediately — status codes are never retried" do
@@ -265,6 +333,9 @@ defmodule Akaw.RequestTest do
         end)
 
       refute log =~ "retrying"
+      # Process-scoped, capture-independent proof: no second connection.
+      assert_received {:accepted, 1}
+      refute_received {:accepted, 2}
     end
 
     test "pool exhaustion is {:error, pool_timeout}, not a raise — plain and reduce paths" do
@@ -344,6 +415,8 @@ defmodule Akaw.RequestTest do
         end)
 
       refute log =~ "retrying"
+      assert_received {:accepted, 1}
+      refute_received {:accepted, 2}
     end
 
     test "json: bodies carry content-type and accept, encoded by the native JSON module" do
@@ -514,30 +587,50 @@ defmodule Akaw.RequestTest do
   # shape of the pooled keep-alive race — and whose second connection
   # serves a real 200. A stub plug can't produce this: a cooperative
   # server always answers what it accepts.
+  #
+  # Sends {:accepted, n} to the test per connection: the no-retry tests
+  # refute_receive {:accepted, 2}, which is process-scoped proof no
+  # second attempt happened — unlike log refutes, which capture_log
+  # shares across the whole async suite. Both accepts case-match so the
+  # tests that legitimately never open a second connection tear the
+  # fixture down quietly when the listen socket closes with the test.
   defp close_first_then_serve do
     {:ok, listen} =
       :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true, ip: {127, 0, 0, 1}])
 
     {:ok, port} = :inet.port(listen)
+    test = self()
 
     spawn_link(fn ->
-      {:ok, first} = :gen_tcp.accept(listen)
-      _request = :gen_tcp.recv(first, 0, 5_000)
-      :gen_tcp.close(first)
+      case :gen_tcp.accept(listen) do
+        {:ok, first} ->
+          send(test, {:accepted, 1})
+          _request = :gen_tcp.recv(first, 0, 5_000)
+          :gen_tcp.close(first)
 
-      {:ok, second} = :gen_tcp.accept(listen)
-      _request = :gen_tcp.recv(second, 0, 5_000)
-      body = ~s({"ok":true})
+          case :gen_tcp.accept(listen) do
+            {:ok, second} ->
+              send(test, {:accepted, 2})
+              _request = :gen_tcp.recv(second, 0, 5_000)
+              body = ~s({"ok":true})
 
-      :gen_tcp.send(second, [
-        "HTTP/1.1 200 OK\r\n",
-        "content-type: application/json\r\n",
-        "content-length: #{byte_size(body)}\r\n\r\n",
-        body
-      ])
+              :gen_tcp.send(second, [
+                "HTTP/1.1 200 OK\r\n",
+                "content-type: application/json\r\n",
+                "content-length: #{byte_size(body)}\r\n\r\n",
+                body
+              ])
 
-      :gen_tcp.close(second)
-      :gen_tcp.close(listen)
+              :gen_tcp.close(second)
+              :gen_tcp.close(listen)
+
+            {:error, _closed} ->
+              :ok
+          end
+
+        {:error, _closed} ->
+          :ok
+      end
     end)
 
     port

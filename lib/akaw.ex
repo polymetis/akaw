@@ -233,10 +233,43 @@ defmodule Akaw do
     %Client{
       base_url: base_url,
       auth: validate_auth!(Keyword.get(opts, :auth) || url_auth),
-      finch: Keyword.get(opts, :finch),
+      finch: opts |> Keyword.get(:finch) |> validate_finch!(),
       headers: Keyword.get(opts, :headers, []),
       req_options: opts |> Keyword.get(:req_options, []) |> validate_req_options!()
     }
+  end
+
+  # The keyword form takes exactly the keys the request layer forwards.
+  # Silently dropping the rest would let `finch: [name: X, pool_size:
+  # 100]` run on default sizing until saturation teaches the user
+  # otherwise — the failure arrives days later, pointing nowhere.
+  defp validate_finch!(nil), do: nil
+  defp validate_finch!(name) when is_atom(name), do: name
+
+  defp validate_finch!(options) when is_list(options) do
+    case Keyword.keys(options) -- [:name, :pool_tag] do
+      [] ->
+        options
+
+      unknown ->
+        raise ArgumentError, """
+        unknown key(s) in :finch: #{inspect(Enum.uniq(unknown))}
+
+        The keyword form takes exactly :name and :pool_tag. Pool sizing, \
+        TLS, and proxy settings are configured on the named Finch pool \
+        itself:
+
+            {Finch, name: MyApp.CouchPool, pools: %{default: [size: 100]}}
+
+            Akaw.new(base_url: url, finch: MyApp.CouchPool)
+        """
+    end
+  end
+
+  defp validate_finch!(other) do
+    raise ArgumentError,
+          ":finch takes a pool name (atom) or a keyword list " <>
+            "[name: ..., pool_tag: ...] — got #{inspect(other)}"
   end
 
   # A control character in a credential (the classic: a trailing newline

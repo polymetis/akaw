@@ -83,6 +83,7 @@ defmodule Akaw.Request do
     {pool_timeout, merged} = Keyword.pop(merged, :pool_timeout)
     {retry, merged} = Keyword.pop(merged, :retry, :safe_transient)
 
+    validate_retry_value!(retry)
     reject_unknown_options!(merged)
 
     {body, headers} = encode_json_body(json, body, headers)
@@ -115,7 +116,9 @@ defmodule Akaw.Request do
 
   # The closed option surface. Anything else is a bug at the endpoint
   # layer (or a Req-era option that no longer exists) — raise with the
-  # inventory rather than silently dropping it.
+  # inventory rather than silently dropping it. (`:return` is popped in
+  # request/4 before this layer and deliberately not listed: the
+  # streaming entry points share prepared/4 and take no :return.)
   @known_options [
     :params,
     :json,
@@ -124,8 +127,7 @@ defmodule Akaw.Request do
     :compressed,
     :receive_timeout,
     :pool_timeout,
-    :retry,
-    :return
+    :retry
   ]
 
   defp reject_unknown_options!([]), do: :ok
@@ -137,6 +139,18 @@ defmodule Akaw.Request do
     Akaw.Request accepts exactly #{inspect(@known_options)} — it is a \
     closed surface over the HTTP client, not a passthrough.\
     """
+  end
+
+  # Same value domain the client-level allowlist enforces, applied to the
+  # per-call spelling: a function-valued policy would silently mean
+  # "enabled" through the `retry != false` collapse below — and program
+  # the caller against transport types the contract doesn't expose.
+  defp validate_retry_value!(value) when value in [nil, false, :safe_transient, :transient],
+    do: :ok
+
+  defp validate_retry_value!(other) do
+    raise ArgumentError,
+          ":retry takes false, :safe_transient, or :transient — got #{inspect(other)}"
   end
 
   # ---------------------------------------------------------------------
@@ -194,14 +208,23 @@ defmodule Akaw.Request do
   defp apply_auth(headers, {:bearer, token}),
     do: put_new_header(headers, "authorization", "Bearer #{token}")
 
-  # Ask for gzip by default: CouchDB compresses JSON bodies and text
-  # attachments when allowed — measured at 38x fewer bytes on the wire
-  # for a text attachment. The decompression-bomb rationale for
-  # defaulting this off in general-purpose clients doesn't apply: akaw
-  # only ever talks to the CouchDB you pointed it at. `compressed:
-  # false` (per call or per client) opts out; streaming paths pin it
-  # off unconditionally (chunk parsers must never see gzip bytes).
-  defp apply_compressed(headers, false), do: headers
+  # Ask for gzip by default. CouchDB serves compressible attachments
+  # gzip-encoded when allowed — measured at 38x fewer bytes on the wire
+  # for a text attachment — while its JSON API responses arrive
+  # uncompressed either way (verified empirically against 3.5.1). The
+  # decompression-bomb rationale for defaulting this off in
+  # general-purpose clients doesn't apply: akaw only ever talks to the
+  # CouchDB you pointed it at.
+  #
+  # `compressed: false` means "this response must arrive plain": it
+  # strips even an explicit accept-encoding header, because its one
+  # load-bearing use is the streaming paths' unconditional pin — chunk
+  # parsers must never see gzip bytes, including via a client-level
+  # literal header.
+  defp apply_compressed(headers, false) do
+    Enum.reject(headers, fn {name, _value} -> String.downcase(name) == "accept-encoding" end)
+  end
+
   defp apply_compressed(headers, _), do: put_new_header(headers, "accept-encoding", "gzip")
 
   defp put_new_header(headers, name, value) do

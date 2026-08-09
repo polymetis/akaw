@@ -63,48 +63,33 @@ defmodule Akaw.Integration.ServerTest do
 end
 
 defmodule Akaw.Integration.ServerFinchPoolTest do
-  # async: false — deliberately, and it's the load-bearing part of these
-  # tests. They capture :stderr, and ExUnit shares named-device capture
-  # content among ALL concurrently capturing tests, so anything any
-  # async test writes to stderr can bleed into this capture (observed
-  # live at seed 784254, back when a request_test case deliberately
-  # emitted the exact "deprecated" warning refuted here; that emitter
-  # died with the Req corner it pinned, but the shared-capture hazard
-  # is structural). Sync tests run serially after the whole async
-  # phase, so nothing can interleave with the capture.
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   @moduletag :integration
 
   import Akaw.IntegrationHelpers
 
+  # The stderr captures these tests once carried died with the Req-era
+  # deprecation warnings they refuted — nothing on the Finch-direct path
+  # can emit one. What's left is the behavioral half: requests route
+  # through the named pool (both spellings). The pool_tag *forwarding*
+  # is pinned in the unit suite via Request.prepared/4, since Finch
+  # silently falls back to the :default pool config for an unknown tag.
   describe "custom Finch pool" do
-    test "a named pool routes requests and emits no Req deprecation warning" do
+    test "a named pool routes requests" do
       name = :"akaw_it_finch_#{System.unique_integer([:positive])}"
       start_supervised!({Finch, name: name})
 
-      stderr =
-        ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          assert {:ok, info} = Akaw.Server.info(client(finch: name))
-          assert info["couchdb"] == "Welcome"
-        end)
-
-      # Req 0.7 deprecated the bare `finch: name` spelling and warns once per
-      # request; Akaw.Request translates it, so a named pool stays silent.
-      refute stderr =~ "deprecated"
+      assert {:ok, info} = Akaw.Server.info(client(finch: name))
+      assert info["couchdb"] == "Welcome"
     end
 
-    test "the keyword form carries extra Finch options through" do
+    test "the keyword form routes too" do
       name = :"akaw_it_finch_kw_#{System.unique_integer([:positive])}"
       start_supervised!({Finch, name: name})
 
-      stderr =
-        ExUnit.CaptureIO.capture_io(:stderr, fn ->
-          assert {:ok, info} = Akaw.Server.info(client(finch: [name: name, pool_tag: :bulk]))
-          assert info["couchdb"] == "Welcome"
-        end)
-
-      refute stderr =~ "deprecated"
+      assert {:ok, info} = Akaw.Server.info(client(finch: [name: name, pool_tag: :bulk]))
+      assert info["couchdb"] == "Welcome"
     end
   end
 end

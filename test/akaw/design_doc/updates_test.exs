@@ -56,7 +56,7 @@ defmodule Akaw.DesignDoc.UpdatesTest do
     # goes to the wire unrewritten; CouchDB itself answers 405 for an
     # update function invoked with GET, which is the loud, server-side
     # truth rather than a client-side guess.
-    assert {_, _} = Akaw.DesignDoc.Updates.call(client, "db", "d", "f", method: :get)
+    assert {:ok, _} = Akaw.DesignDoc.Updates.call(client, "db", "d", "f", method: :get)
 
     assert_receive %{method: "GET", body: body}
     assert JSON.decode!(body) == %{}
