@@ -15,12 +15,11 @@ defmodule Akaw.Error do
     * **Transport** (DNS, connection refused, timeout, …) — `status` is
       `nil`, `error` is `"transport_error"`, `reason` is the underlying
       exception's message, `body` is `%{exception: original_exception}`
-      so you can re-examine the source error if needed. That struct is
-      a `%Req.TransportError{}` on plain requests, `reduce_*_while`
-      calls, and stream opens; only a mid-feed failure on the lazy
-      streams carries the raw Finch/Mint exception, because those
-      arrive via `Req.parse_message/2` outside Req's error
-      normalization.
+      so you can re-examine the source error if needed. The struct is
+      whatever the transport raised — usually a `%Mint.TransportError{}`,
+      occasionally Finch's own — on every path alike; `reason` is
+      `Exception.message/1` of it, which stays stable across transport
+      versions.
 
     * **Decode failures** — a 2xx response whose body failed JSON
       decoding (a proxy truncating responses, a misbehaving middlebox):
@@ -36,6 +35,14 @@ defmodule Akaw.Error do
       diagnostic context. `"stream_transport_error"` also fills `body`
       with `%{exception: original_exception}`, same as the transport case
       above.
+
+    * **Pool saturation** — every connection busy and `:pool_timeout`
+      exhausted: `status` is `nil`, `error` is `"pool_timeout"`, `body`
+      is `%{exception: e}`. Its own tag, not `"transport_error"`: the
+      network is fine — the client-side pool is undersized for the
+      concurrency, and the remedies differ in kind. Plain requests and
+      the `reduce_while` family return it; the lazy streams can't (see
+      "Connection pooling" in the `Akaw` docs).
 
     * **Broken auth contracts** — `status` is `nil`, `error` is
       `"no_auth_cookie"` (a re-auth answer granted no `AuthSession`

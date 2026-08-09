@@ -36,9 +36,10 @@ defmodule Akaw.Attachment do
   Returns `{:ok, body, meta}`:
 
     * `body` — typically a `binary` of the attachment bytes (image, PDF,
-      gzipped blob, …). If CouchDB happens to serve the attachment with a
-      JSON `Content-Type`, Req auto-decodes it into a map/list/scalar —
-      the spec types this as `term()` to reflect that.
+      gzipped blob, …). An attachment stored with content type exactly
+      `application/json` comes back decoded into a map/list/scalar —
+      the spec types this as `term()` to reflect that. (`+json`
+      suffixes like `application/vnd.api+json` stay raw bytes.)
     * `meta` — `%{content_type: String.t() | nil, etag: String.t() | nil}`.
       The ETag is CouchDB's base64-MD5 of the attachment content (in
       quotes per HTTP spec) — useful for client-side caching, **not** the

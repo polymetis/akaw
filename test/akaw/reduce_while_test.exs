@@ -340,6 +340,48 @@ defmodule Akaw.ReduceWhileTest do
 
       assert ids == ["only"]
     end
+
+    test "a chunked response carrying HTTP trailers completes instead of crashing" do
+      # Trailers are part of the transport's stream contract even though
+      # CouchDB never sends them — an intermediary can. Before the
+      # {:trailers, _} clause, this was a FunctionClauseError on a
+      # checked-out connection. Bandit can't fabricate trailers, so raw
+      # bytes it is.
+      body = ~s({"seq":"1","id":"trailed"}\n)
+
+      {:ok, listen} =
+        :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true, ip: {127, 0, 0, 1}])
+
+      {:ok, port} = :inet.port(listen)
+
+      spawn_link(fn ->
+        {:ok, socket} = :gen_tcp.accept(listen)
+        _request = :gen_tcp.recv(socket, 0, 5_000)
+
+        :gen_tcp.send(socket, [
+          "HTTP/1.1 200 OK\r\n",
+          "content-type: application/json\r\n",
+          "transfer-encoding: chunked\r\n",
+          "trailer: x-couch-request-id\r\n\r\n",
+          Integer.to_string(byte_size(body), 16),
+          "\r\n",
+          body,
+          "\r\n0\r\nx-couch-request-id: deadbeef\r\n\r\n"
+        ])
+
+        :gen_tcp.close(socket)
+        :gen_tcp.close(listen)
+      end)
+
+      client = Akaw.new(base_url: "http://127.0.0.1:#{port}")
+
+      assert {:ok, ids} =
+               Akaw.Changes.reduce_while(client, "db", [], fn change, acc ->
+                 {:cont, [change["id"] | acc]}
+               end)
+
+      assert ids == ["trailed"]
+    end
   end
 
   describe "Akaw.Changes.reduce_while/5" do
@@ -973,7 +1015,7 @@ defmodule Akaw.ReduceWhileTest do
 
       client =
         Loopback.client(flaky_once_plug(calls),
-          req_options: [retry: :safe_transient, retry_delay: fn _ -> 0 end]
+          req_options: [retry: :safe_transient]
         )
 
       assert {:error, %Akaw.Error{status: 503}} =
@@ -1018,7 +1060,7 @@ defmodule Akaw.ReduceWhileTest do
 
       client =
         Loopback.client(flaky_once_plug(calls),
-          req_options: [retry: :safe_transient, retry_delay: fn _ -> 0 end]
+          req_options: [retry: :safe_transient]
         )
 
       assert_raise Akaw.Error, ~r/503/, fn ->

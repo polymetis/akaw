@@ -51,10 +51,14 @@ defmodule Akaw.DesignDoc.UpdatesTest do
     assert_receive %{path: "/db/_design/d/_update/f/_design/target"}
   end
 
-  test "call/5 refuses method: :get, which always carries a body", %{client: client} do
-    # `:body` defaults to %{} here, so :get is always the ambiguous case.
-    assert_raise ArgumentError, ~r/cannot send a request body with `method: :get`/, fn ->
-      Akaw.DesignDoc.Updates.call(client, "db", "d", "f", method: :get)
-    end
+  test "call/5 sends method: :get verbatim, body and all", %{client: client} do
+    # `:body` defaults to %{} here, so :get always carries one. The verb
+    # goes to the wire unrewritten; CouchDB itself answers 405 for an
+    # update function invoked with GET, which is the loud, server-side
+    # truth rather than a client-side guess.
+    assert {:ok, _} = Akaw.DesignDoc.Updates.call(client, "db", "d", "f", method: :get)
+
+    assert_receive %{method: "GET", body: body}
+    assert JSON.decode!(body) == %{}
   end
 end

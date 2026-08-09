@@ -60,9 +60,17 @@ defmodule Akaw.Find do
   stop early. Returns `{:ok, final_acc}` or `{:error, %Akaw.Error{}}`.
 
   `opts` accepts the transport escape hatches `:receive_timeout` and
-  `:pool_timeout` (forwarded through Req);
+  `:pool_timeout` (forwarded to Finch);
   `retry:` raises — streaming requests never retry. Everything else is
   ignored (Mango doesn't take query params besides the body).
+
+  ## Interrupted walks: resume, don't retry
+
+  A transport failure mid-walk returns `{:error, %Akaw.Error{}}` and the
+  accumulator is lost — keep your checkpoint in caller-owned storage,
+  never the accumulator. For Mango the checkpoint is pagination:
+  page with `limit` plus the `bookmark` each page returns, and resume
+  from the last bookmark you stored.
 
   Mango has no mid-stream checkpoint: if you need a resumable walk over
   a large result set, page with `:limit` + `:bookmark` through the

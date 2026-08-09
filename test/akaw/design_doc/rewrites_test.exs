@@ -46,19 +46,22 @@ defmodule Akaw.DesignDoc.RewritesTest do
     assert JSON.decode!(body) == %{"name" => "x"}
   end
 
-  test "call/5 refuses a body on the default :get method", %{client: client} do
-    # Req 0.7 would silently rewrite this to POST, so a rule pinned to
-    # "method": "GET" would stop matching and 404. akaw refuses instead.
-    assert_raise ArgumentError, ~r/cannot send a request body with `method: :get`/, fn ->
-      Akaw.DesignDoc.Rewrites.call(client, "db", "d", "items", body: %{name: "x"})
-    end
+  test "call/5 sends a body on the default :get method verbatim", %{client: client} do
+    # The verb is never rewritten: a rule pinned to "method": "GET"
+    # keeps matching even when the request carries a body. (The Req-era
+    # transport promoted GET-with-body to POST, so this once raised.)
+    assert {:ok, _} =
+             Akaw.DesignDoc.Rewrites.call(client, "db", "d", "items", body: %{name: "x"})
 
-    refute_receive %{}
+    assert_receive %{method: "GET", body: body}
+    assert JSON.decode!(body) == %{"name" => "x"}
   end
 
-  test "call/5 sends a GET with a body when the method is the string \"GET\"", %{client: client} do
-    # The documented escape hatch out of the ArgumentError above: a binary
-    # method bypasses Req's :get -> :post promotion entirely.
+  test "call/5 sends a GET with a body when the method is the string \"GET\" too", %{
+    client: client
+  } do
+    # Atom and string spellings are interchangeable now — both go to the
+    # wire verbatim.
     assert {:ok, _} =
              Akaw.DesignDoc.Rewrites.call(client, "db", "d", "items",
                method: "GET",
@@ -67,6 +70,30 @@ defmodule Akaw.DesignDoc.RewritesTest do
 
     assert_receive %{method: "GET", body: body}
     assert JSON.decode!(body) == %{"name" => "x"}
+  end
+
+  test "call/5 merges :params into a query the path already carries", %{client: client} do
+    # The documented contract: :params override same-named parameters in
+    # the rewrite path rather than appending — and never produce a
+    # second "?". (This regressed silently in the transport swap's first
+    # cut; the URL came out as ...?limit=5?limit=10.)
+    assert {:ok, _} =
+             Akaw.DesignDoc.Rewrites.call(client, "db", "d", "search?limit=5&skip=2",
+               params: [limit: 10]
+             )
+
+    assert_receive %{path: "/db/_design/d/_rewrite/search", query_string: qs}
+    decoded = URI.decode_query(qs)
+    assert decoded["limit"] == "10"
+    assert decoded["skip"] == "2"
+    refute qs =~ "?"
+  end
+
+  test "call/5 leaves a path-embedded query untouched when there are no :params", %{
+    client: client
+  } do
+    assert {:ok, _} = Akaw.DesignDoc.Rewrites.call(client, "db", "d", "search?q=a%20b")
+    assert_receive %{path: "/db/_design/d/_rewrite/search", query_string: "q=a%20b"}
   end
 
   test "call/5 with :params", %{client: client} do

@@ -72,7 +72,7 @@ defmodule Akaw.ChangesTest do
 
       client =
         Loopback.client(plug,
-          req_options: [retry: :safe_transient, retry_delay: fn _ -> 0 end]
+          req_options: [retry: :safe_transient]
         )
 
       assert {:error, %Akaw.Error{status: 503}} =

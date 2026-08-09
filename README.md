@@ -9,8 +9,9 @@ whole 3.x surface — documents, attachments, views, Mango, design functions,
 partitioned databases, replication, and the cluster administration endpoints —
 and it streams large responses properly rather than materialising them.
 
-Built on [Req](https://hex.pm/packages/req) (and therefore
-[Finch](https://hex.pm/packages/finch)).
+Speaks directly through [Finch](https://hex.pm/packages/finch) with the
+OTP-native `JSON` module — between your call and the socket sit exactly
+one HTTP client and one parser.
 
 ## Installation
 
@@ -145,10 +146,15 @@ sitting in process state will not leak secrets into a crash report.
 
 ## Connection pooling
 
-Akaw uses Req's default pool. To use your own:
+Akaw is an OTP application: it boots one Finch instance named
+`Akaw.Finch` (one HTTP/1 pool of 50 connections per CouchDB host), and
+every client uses it with zero setup. To use your own — bigger sizes,
+TLS options for a self-signed CouchDB, a proxy — start a Finch in your
+supervision tree under a name of *yours* (never `Akaw.Finch`; akaw's
+copy boots first and yours would fail with `:already_started`):
 
 ```elixir
-children = [{Finch, name: MyApp.Finch, pools: %{default: [size: 50]}}]
+children = [{Finch, name: MyApp.Finch, pools: %{default: [size: 200]}}]
 
 client = Akaw.new(base_url: url, finch: MyApp.Finch)
 ```

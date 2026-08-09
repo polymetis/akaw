@@ -195,9 +195,15 @@ defmodule Akaw.SessionServer do
           Map.put(metadata, :error, error)
         )
 
+        # Exception.message/1, never inspect/1: a refresh_exception error
+        # carries the raised struct and stacktrace in :body, and a
+        # password_fn that raised mid-vault-fetch can have credential
+        # fragments in either. The full struct still reaches the caller
+        # through the returned error and the telemetry metadata — this
+        # is only about what lands in the log.
         Logger.warning(
           "Akaw.SessionServer refresh failed (name=#{inspect(state.name)}): " <>
-            inspect(error)
+            Exception.message(error)
         )
 
         err

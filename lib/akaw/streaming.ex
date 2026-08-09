@@ -5,30 +5,45 @@ defmodule Akaw.Streaming do
   # responses (`_changes` continuous feed, line-delimited `_all_docs`,
   # views, `_find`). Two flavors:
   #
-  #   * `chunks/4` — lazy `Stream` of raw binary chunks. Uses Req's
-  #     `into: :self` mode plus `Req.parse_message/2`, then drives the
-  #     producer/consumer through `Stream.resource/3`. Ergonomic but
-  #     drains the calling process's mailbox; not safe to call from a
-  #     GenServer / LiveView / anything with its own mail.
+  #   * `chunks/4` — lazy `Stream` of raw binary chunks. Uses
+  #     `Finch.async_request/3`: response parts arrive as ref-tagged
+  #     mailbox messages, consumed with a selective `receive`. Ergonomic,
+  #     but body parts pile into the calling process's mailbox with no
+  #     backpressure; prefer the reduce API from anything long-lived.
   #
   #   * `reduce_chunks_while/6`, `reduce_lines_while/6`,
   #     `reduce_items_while/6` — synchronous, backpressured callback API
-  #     built on Req's `into: fun`. The user reducer runs inline inside
-  #     `Finch.stream_while`, so (a) no mailbox messages reach the
-  #     calling process and (b) blocking in the reducer stalls socket
-  #     reads and applies real TCP backpressure to CouchDB.
+  #     built on `Finch.stream_while/5`. The user reducer runs inline in
+  #     the calling process, so (a) no mailbox messages are involved and
+  #     (b) blocking in the reducer stalls socket reads and applies real
+  #     TCP backpressure to CouchDB.
   #
-  # ## Retry: off, unconditionally — resume is the caller's job
+  # The backpressure claim is an HTTP/1 fact. A caller-supplied Finch
+  # pool configured for HTTP/2 has NO flow control on streams (Finch's
+  # own docs box-warn against h2 for non-terminating responses) —
+  # streaming endpoints require an HTTP/1 pool, which is also all
+  # CouchDB speaks. Two cost notes: every early `:halt` closes the
+  # pooled connection (HTTP/1 can't abandon a half-read body), so a
+  # halt-after-N-rows pattern pays a reconnect per call; and on a
+  # transport failure the accumulator is LOST — the error tuple carries
+  # no acc. That's by design: checkpoints live in caller-owned storage,
+  # never the accumulator (see "resume, don't retry" below).
   #
-  # Streaming and held-open requests NEVER retry, and there is no opt-in
-  # at any layer (a per-call `retry:` raises; a client-level
-  # `req_options[:retry]` is overridden). Two reasons, both from the
-  # design record:
+  # ## Retry: off, structurally — resume is the caller's job
   #
-  # 1. Correctness: with `into:` collectors the body consumed before a
-  #    failure has already been fed to the caller, and a retried attempt
-  #    builds a fresh `%Req.Response{}` — accumulator reset, every row
-  #    re-delivered. `{:ok, final_acc}` must mean delivered-once.
+  # Streaming and held-open requests NEVER retry: these paths contain no
+  # retry code at all, and there is no opt-in at any layer (a per-call
+  # `retry:` raises; a client-level `req_options[:retry]` applies only to
+  # plain requests). The transport underneath keeps that promise too:
+  # Finch's one internal retry (:read_only, HTTP/2 pool draining) fires
+  # strictly before any response part flows and can't occur on an
+  # HTTP/1 pool at all — delivery-once holds through it either way.
+  # Two reasons, both from the design record:
+  #
+  # 1. Correctness: body already consumed before a failure has already
+  #    been fed to the caller; a retried attempt would reset the
+  #    accumulator and re-deliver every row. `{:ok, final_acc}` must mean
+  #    delivered-once.
   # 2. Liveness at scale: streaming exists for datasets larger than RAM.
   #    Restart-from-row-zero on a walk whose duration approaches the
   #    connection's MTBF has completion probability trending to zero;
@@ -36,38 +51,58 @@ defmodule Akaw.Streaming do
   #    trends to one. Transparent retry is an anti-resume that also
   #    hides that it ran.
   #
-  # The client-level override matters: whoever set retry: :safe_transient
-  # on the client for their doc CRUD is not necessarily the person
-  # calling reduce_while through it. Held-open feed requests (longpoll
-  # included, non-streaming) pin retry off for the additional reason
-  # that retrying a client-side-timed-out longpoll is guaranteed to time
-  # out again while abandoning server-side connections.
+  # Held-open feed requests (longpoll included, non-streaming) ride
+  # `Akaw.Request` and pin `retry: false` there — retrying a
+  # client-side-timed-out longpoll is guaranteed to time out again while
+  # abandoning server-side connections.
+  #
+  # ## Compression: never advertised on streaming paths
+  #
+  # Every streaming request pins `compressed: false`: the line splitter
+  # and the JSON-item state machine parse bytes as they arrive, and a
+  # gzip-encoded body would reach them as compressed garbage. Complete
+  # (non-streaming) responses negotiate gzip as usual.
   #
   # ## chunks/4 — idle timeout
   #
-  # `next_chunk/1` does a `receive` with an `after` clause keyed on the
-  # `:idle_timeout` opt (default 5 minutes). If no chunk arrives within
-  # that window the stream raises `%Akaw.Error{}` — guards against silent
-  # stalls where a load balancer or NAT has dropped a connection and TCP
-  # hasn't noticed. For `_changes` feeds, set this to slightly more than
-  # your `:heartbeat` so heartbeats always reset the clock.
+  # `next_chunk/1` does a selective `receive` with an `after` clause
+  # keyed on the `:idle_timeout` opt (default 5 minutes). On the feed
+  # paths the transport's `:receive_timeout` (auto-derived from the
+  # heartbeat) fires first and surfaces as a transport error — the idle
+  # clock is really a dead-man's switch on the request process itself,
+  # the guard for stalls the socket timeout can't see. Tune
+  # `:receive_timeout` for connection quietness; leave `:idle_timeout`
+  # for the pathological case.
   #
-  # ## chunks/4 — mailbox ownership
+  # ## chunks/4 — mailbox behavior
   #
-  # The `receive` consumes any message and routes it through
-  # `Req.parse_message/2`; non-Finch messages return `:unknown` and we
-  # recurse. This means consuming an Akaw stream from a process that also
-  # receives other mail (a GenServer, LiveView, monitor) will drain those
-  # unrelated messages and break the consumer's contract. Run streams from
-  # a process you own — typically a `Task` or a spawned helper — or use
-  # the `reduce_*_while` callback API instead.
+  # Response parts arrive as `{request_ref, part}` messages and are
+  # consumed with a selective `receive` — unrelated messages in the
+  # calling process's mailbox are left untouched. (The Req-era
+  # implementation had to receive *everything* and could eat a
+  # GenServer's own mail; that hazard is gone.) What remains: parts
+  # arrive with no backpressure, so a consumer slower than the server
+  # accumulates them in its mailbox, and an unconsumed stream must be
+  # closed (Stream.resource does this) or its messages linger. Prefer
+  # `reduce_*_while` from anything with a long-lived mailbox.
+  #
+  # Two honest edges for long-lived consumers. The close-time flush is
+  # best-effort: cancellation is an async exit signal, so one in-flight
+  # part can land after `close/1` returns and sit in the mailbox as a
+  # stray `{ref, part}`. And the transport's helper process is LINKED to
+  # the consumer: a process trapping exits sees `{:EXIT, _, :normal}`
+  # after a fully-consumed stream, and an abnormal helper death (pool
+  # checkout exhaustion included) kills a non-trapping consumer outright
+  # — the reduce API classifies that same condition as
+  # {:error, "pool_timeout"}; this one can't.
   #
   # ## chunks/4 — open errors
   #
   # The `start_fun` raises `Akaw.Error` in both cases:
   #
-  #   * HTTP non-2xx — the async body is drained once and decoded to
-  #     extract CouchDB's `error` / `reason` into the struct.
+  #   * HTTP non-2xx — the async body is drained once (capped at
+  #     @max_error_body, hard deadline) and decoded to extract CouchDB's
+  #     `error` / `reason` into the struct.
   #   * Transport failure — `error: "stream_transport_error"` with the
   #     underlying exception in `body.exception`, the same shape as a
   #     mid-stream failure. One tag per API mode: every transport
@@ -83,22 +118,25 @@ defmodule Akaw.Streaming do
   # ## reduce_*_while — error body
   #
   # When the response is non-2xx, the user reducer is *not* called.
-  # Chunks accumulate in `resp.private[:akaw_error_body]` and after the
-  # request finishes we decode them into the final `%Akaw.Error{}`.
+  # Chunks accumulate (capped) in the stream state and are decoded into
+  # the final `%Akaw.Error{}` after the request finishes.
 
   alias Akaw.{Client, Error, JsonItemStream, Request}
 
   @drain_timeout 5_000
   @default_idle_timeout to_timeout(minute: 5)
 
+  # Error-body ceiling, shared by both flavors of non-2xx buffering (the
+  # reduce path's collector and the async open drain): a misbehaving
+  # server returning a multi-megabyte HTML error page can't grow our
+  # heap — we keep the first 64 KiB and close.
+  @max_error_body 64 * 1024
+
   @doc """
   Lazy stream of raw binary chunks from the HTTP response body.
 
-  `opts` is forwarded to `Akaw.Request.request_raw/4`; `into: :self` is set
-  for you. Per-call options like `:params`, `:json`, and `:headers` work
-  the same way as in non-streaming requests.
-
-  Additional streaming-only option:
+  `opts` accepts the same per-call options as non-streaming requests
+  (`:params`, `:json`, `:headers`, ...) plus one streaming-only option:
 
     * `:idle_timeout` — milliseconds to wait between chunks before raising
       `%Akaw.Error{error: "stream_idle_timeout"}` (default 5 minutes).
@@ -114,90 +152,105 @@ defmodule Akaw.Streaming do
 
   defp open(client, method, path, opts) do
     {idle_timeout, opts} = Keyword.pop(opts, :idle_timeout, @default_idle_timeout)
+    opts = Keyword.put(opts, :compressed, false)
 
-    opts =
-      opts
-      |> Keyword.put(:into, :self)
-      |> pin_retry_off()
+    {finch_request, pool, finch_opts, _retry} = Request.prepared(client, method, path, opts)
+    ref = Finch.async_request(finch_request, pool, finch_opts)
 
-    case Request.request_raw(client, method, path, opts) do
-      {:ok, %Req.Response{status: status} = resp} when status in 200..299 ->
-        %{response: resp, idle_timeout: idle_timeout, finished: false}
+    await_open(%{ref: ref, idle_timeout: idle_timeout, finished: false})
+  end
 
-      {:ok, %Req.Response{status: status} = resp} ->
-        raise build_open_error(resp, status)
+  # The response status is the first part to arrive; a held-open feed's
+  # can legitimately be slow, so the wait runs on the same idle clock as
+  # the body. A 1xx is informational — the real status follows on the
+  # same ref, so keep waiting (its headers fall through the same way).
+  defp await_open(%{ref: ref} = state) do
+    receive do
+      {^ref, {:status, status}} when status in 100..199 ->
+        await_open(state)
 
-      {:error, exception} ->
+      {^ref, {:status, status}} when status in 200..299 ->
+        state
+
+      {^ref, {:status, status}} ->
+        raise open_error(ref, status)
+
+      {^ref, {:headers, _headers}} ->
+        await_open(state)
+
+      {^ref, {:error, exception}} ->
         raise stream_transport_error(exception)
+    after
+      state.idle_timeout ->
+        cancel_and_flush(ref)
+        raise idle_error(state.idle_timeout)
     end
   end
 
   defp next_chunk(%{finished: true} = state), do: {:halt, state}
 
-  defp next_chunk(state) do
+  defp next_chunk(%{ref: ref} = state) do
     receive do
-      message ->
-        case Req.parse_message(state.response, message) do
-          {:ok, parts} ->
-            {chunks, finished?} = collect_chunks(parts)
-            {chunks, %{state | finished: finished?}}
+      {^ref, {:data, chunk}} ->
+        {[chunk], state}
 
-          {:error, reason} ->
-            raise stream_transport_error(reason)
+      # Response headers before the body, trailers after it (the async
+      # path tags them distinctly) — neither is part of the chunk stream.
+      {^ref, {:headers, _headers}} ->
+        next_chunk(state)
 
-          :unknown ->
-            next_chunk(state)
-        end
+      {^ref, {:trailers, _trailers}} ->
+        next_chunk(state)
+
+      {^ref, :done} ->
+        {[], %{state | finished: true}}
+
+      {^ref, {:error, exception}} ->
+        raise stream_transport_error(exception)
     after
       state.idle_timeout ->
-        raise %Error{
-          status: nil,
-          error: "stream_idle_timeout",
-          reason: "no data received within #{state.idle_timeout}ms"
-        }
+        raise idle_error(state.idle_timeout)
     end
   end
 
-  # `Req.parse_message/2` hands back the raw transport exception without
-  # running Req's own error normalization, so the struct depends on the
-  # Finch version — Finch 0.23 wraps Mint's error, turning
-  # `%Mint.TransportError{reason: :closed}` into
-  # `%Finch.TransportError{reason: :closed, source: %Mint.TransportError{...}}`.
-  # `inspect/1`-ing that leaked the difference straight into the documented
-  # `:reason` string. `Exception.message/1` is stable across both ("socket
-  # closed"), and stashing the struct in `:body` matches what `Akaw.Error`'s
-  # moduledoc already promises for transport failures — and what the
-  # non-streaming path has always done.
-  defp stream_transport_error(reason) do
-    %Error{
-      status: nil,
-      error: "stream_transport_error",
-      reason: if(is_exception(reason), do: Exception.message(reason), else: inspect(reason)),
-      body: %{exception: reason}
-    }
-  end
-
-  defp collect_chunks(parts) do
-    # Build a reversed accumulator with O(1) prepends, then reverse once
-    # at the end — `acc ++ [chunk]` is O(n) per element and runs in the
-    # hot streaming path.
-    {rev_chunks, finished?} =
-      Enum.reduce(parts, {[], false}, fn
-        {:data, chunk}, {acc, fin} -> {[chunk | acc], fin}
-        :done, {acc, _} -> {acc, true}
-        _, acc -> acc
-      end)
-
-    {Enum.reverse(rev_chunks), finished?}
-  end
-
-  defp close(%{response: response}) do
-    _ = Req.cancel_async_response(response)
+  defp close(%{ref: ref}) do
+    cancel_and_flush(ref)
     :ok
   end
 
-  defp build_open_error(%Req.Response{body: body} = resp, status) do
-    decoded = drain_async_body(resp, body)
+  # Cancel is idempotent (a completed request just ignores it); the
+  # flush clears any parts already delivered so they can't linger in the
+  # caller's mailbox after the stream is closed.
+  defp cancel_and_flush(ref) do
+    Finch.cancel_async_request(ref)
+    flush_ref(ref)
+  end
+
+  defp flush_ref(ref) do
+    receive do
+      {^ref, _part} -> flush_ref(ref)
+    after
+      0 -> :ok
+    end
+  end
+
+  defp idle_error(idle_timeout) do
+    %Error{
+      status: nil,
+      error: "stream_idle_timeout",
+      reason: "no data received within #{idle_timeout}ms"
+    }
+  end
+
+  defp open_error(ref, status) do
+    body = drain(ref, [], 0, System.monotonic_time(:millisecond) + @drain_timeout)
+    cancel_and_flush(ref)
+
+    decoded =
+      case IO.iodata_to_binary(body) do
+        "" -> %{}
+        bin -> safe_decode(bin)
+      end
 
     %Error{
       status: status,
@@ -207,38 +260,42 @@ defmodule Akaw.Streaming do
     }
   end
 
-  defp drain_async_body(resp, %Req.Response.Async{} = _async) do
-    chunks = drain(resp, [])
-    _ = Req.cancel_async_response(resp)
+  # Bounded twice, like the reduce path's error buffering: at most
+  # @max_error_body bytes (a misbehaving server returning a
+  # multi-megabyte HTML error page can't grow our heap), and at most
+  # @drain_timeout total — a hard deadline, not a per-message window a
+  # dripping server could reset forever.
+  defp drain(ref, acc, size, deadline) do
+    remaining_time = deadline - System.monotonic_time(:millisecond)
 
-    case IO.iodata_to_binary(chunks) do
-      "" -> %{}
-      bin -> safe_decode(bin)
+    if remaining_time <= 0 or size >= @max_error_body do
+      acc
+    else
+      receive do
+        {^ref, {:data, chunk}} -> drain(ref, [acc | chunk], size + byte_size(chunk), deadline)
+        {^ref, {:headers, _headers}} -> drain(ref, acc, size, deadline)
+        {^ref, {:trailers, _trailers}} -> drain(ref, acc, size, deadline)
+        {^ref, :done} -> acc
+        {^ref, {:error, _exception}} -> acc
+      after
+        remaining_time -> acc
+      end
     end
   end
 
-  defp drain_async_body(_resp, body) when is_map(body), do: body
-  defp drain_async_body(_resp, body) when is_binary(body), do: safe_decode(body)
-  defp drain_async_body(_resp, _body), do: %{}
-
-  defp drain(resp, acc) do
-    receive do
-      msg ->
-        case Req.parse_message(resp, msg) do
-          {:ok, parts} ->
-            {chunks, done?} = collect_chunks(parts)
-            new_acc = acc ++ chunks
-            if done?, do: new_acc, else: drain(resp, new_acc)
-
-          {:error, _} ->
-            acc
-
-          :unknown ->
-            drain(resp, acc)
-        end
-    after
-      @drain_timeout -> acc
-    end
+  # The transport hands back its raw exception struct — Mint's, or
+  # Finch's own. `inspect/1`-ing it once leaked the transport's
+  # internals straight into the documented `:reason` string;
+  # `Exception.message/1` is stable ("socket closed"), and stashing the
+  # struct in `:body` matches what `Akaw.Error`'s moduledoc promises for
+  # transport failures — and what the non-streaming path has always done.
+  defp stream_transport_error(reason) do
+    %Error{
+      status: nil,
+      error: "stream_transport_error",
+      reason: if(is_exception(reason), do: Exception.message(reason), else: inspect(reason)),
+      body: %{exception: reason}
+    }
   end
 
   defp safe_decode(bin) do
@@ -268,11 +325,9 @@ defmodule Akaw.Streaming do
   streaming entry point — reduce wrappers, lazy streams, and the
   feed-mode endpoints via `held_open_feed_opts/2`.
 
-  `:receive_timeout` rides to Req through its option passthrough.
-  `:pool_timeout` is folded into Req 0.7's `finch: [...]` keyword by
-  `Akaw.Request`, which keeps the flat spelling here warning-free.
-  Connection-level options (TLS, proxy) are not per-call — configure a
-  named Finch pool and pass it via `Akaw.new(finch: ...)`.
+  `:receive_timeout` and `:pool_timeout` ride to Finch as request
+  options. Connection-level options (TLS, proxy) are not per-call —
+  configure a named Finch pool and pass it via `Akaw.new(finch: ...)`.
   """
   @spec split_req_opts(keyword()) :: {keyword(), keyword()}
   def split_req_opts(opts) when is_list(opts) do
@@ -346,10 +401,10 @@ defmodule Akaw.Streaming do
 
   Explicit `:receive_timeout` always wins — per call *or* per client.
   The per-call opts merge after the client's `req_options` in
-  `Akaw.Request.build/4`, so putting a derived value into per-call opts
-  would silently override a client-level setting; hence the check on
-  both layers. (Retry takes the opposite stance on purpose: `pin_retry_off/1`
-  overrides both layers unconditionally — see the module comment.)
+  `Akaw.Request.prepared/4`, so putting a derived value into per-call
+  opts would silently override a client-level setting; hence the check
+  on both layers. (Retry takes the opposite stance on purpose: the feed
+  paths pin it off unconditionally — see the module comment.)
   """
   @spec default_receive_timeout(Client.t(), keyword(), keyword()) :: keyword()
   def default_receive_timeout(%Client{} = client, req_opts, couchdb_opts) do
@@ -428,14 +483,16 @@ defmodule Akaw.Streaming do
 
     if to_string(Keyword.get(params, :feed, "normal")) in @held_open_feeds do
       # Held-open feeds also pin retry off (client-level opt-ins
-      # included): a longpoll that timed out client-side is guaranteed
-      # to time out again on retry, while abandoning a server-side
-      # connection per attempt — measured live as an explicit 2s
-      # deadline stretching to 14.7s across four abandoned connections.
+      # included): these ride the plain request path, whose keep-alive
+      # retry would re-issue a longpoll that timed out client-side —
+      # guaranteed to time out again while abandoning a server-side
+      # connection per attempt. Measured live as an explicit 2s deadline
+      # stretching to 14.7s across four abandoned connections in the
+      # Req era; the policy survives the transport.
       req_opts =
         client
         |> default_receive_timeout(req_opts, params)
-        |> pin_retry_off()
+        |> Keyword.put(:retry, false)
 
       {req_opts, params}
     else
@@ -483,27 +540,12 @@ defmodule Akaw.Streaming do
         when acc: term()
   def reduce_chunks_while(%Client{} = client, method, path, opts, init_acc, reducer)
       when is_function(reducer, 2) do
-    collector = fn {:data, chunk}, {req, resp} ->
-      if ok_status?(resp.status) do
-        acc = Req.Response.get_private(resp, :akaw_acc, init_acc)
+    on_data = fn chunk, acc -> validate_step(reducer.(chunk, acc)) end
 
-        case reducer.(chunk, acc) do
-          {:cont, new_acc} ->
-            {:cont, {req, Req.Response.put_private(resp, :akaw_acc, new_acc)}}
-
-          {:halt, new_acc} ->
-            {:halt, {req, Req.Response.put_private(resp, :akaw_acc, new_acc)}}
-
-          other ->
-            raise ArgumentError,
-                  "reducer must return {:cont, acc} or {:halt, acc}, got: #{inspect(other)}"
-        end
-      else
-        handle_error_chunk(resp, chunk, req)
-      end
+    case run_stream(client, method, path, opts, init_acc, on_data) do
+      {:ok, %{flavor: acc}} -> {:ok, acc}
+      {:error, _} = error -> error
     end
-
-    run_reduce(client, method, path, opts, init_acc, collector)
   end
 
   @doc """
@@ -525,43 +567,24 @@ defmodule Akaw.Streaming do
         when acc: term()
   def reduce_lines_while(%Client{} = client, method, path, opts, init_acc, reducer)
       when is_function(reducer, 2) do
-    collector = fn {:data, chunk}, {req, resp} ->
-      if ok_status?(resp.status) do
-        acc = Req.Response.get_private(resp, :akaw_acc, init_acc)
-        buf = Req.Response.get_private(resp, :akaw_line_buf, "")
-        {lines, new_buf} = split_lines(buf <> chunk)
+    on_data = fn chunk, {acc, buffer} ->
+      {lines, new_buffer} = split_lines(buffer <> chunk)
 
-        case feed_lines(lines, acc, reducer) do
-          {:cont, new_acc} ->
-            {:cont,
-             {req,
-              resp
-              |> Req.Response.put_private(:akaw_acc, new_acc)
-              |> Req.Response.put_private(:akaw_line_buf, new_buf)}}
-
-          {:halt, new_acc} ->
-            {:halt,
-             {req,
-              resp
-              |> Req.Response.put_private(:akaw_acc, new_acc)
-              |> Req.Response.put_private(:akaw_line_buf, new_buf)
-              |> Req.Response.put_private(:akaw_halted, true)}}
-        end
-      else
-        handle_error_chunk(resp, chunk, req)
+      case feed_lines(lines, acc, reducer) do
+        {:cont, new_acc} -> {:cont, {new_acc, new_buffer}}
+        {:halt, new_acc} -> {:halt, {new_acc, new_buffer}}
       end
     end
 
-    with {:ok, resp} <- run_request(client, method, path, opts, collector),
-         :ok <- check_status(resp) do
-      acc = Req.Response.get_private(resp, :akaw_acc, init_acc)
-
-      if Req.Response.get_private(resp, :akaw_halted, false) do
+    case run_stream(client, method, path, opts, {init_acc, ""}, on_data) do
+      {:ok, %{halted: true, flavor: {acc, _buffer}}} ->
         {:ok, acc}
-      else
-        tail = Req.Response.get_private(resp, :akaw_line_buf, "")
+
+      {:ok, %{flavor: {acc, tail}}} ->
         {:ok, flush_tail_line(tail, acc, reducer)}
-      end
+
+      {:error, _} = error ->
+        error
     end
   end
 
@@ -603,92 +626,142 @@ defmodule Akaw.Streaming do
     end
   end
 
-  defp run_reduce(client, method, path, opts, init_acc, collector) do
-    with {:ok, resp} <- run_request(client, method, path, opts, collector),
-         :ok <- check_status(resp) do
-      {:ok, Req.Response.get_private(resp, :akaw_acc, init_acc)}
+  # ---------------------------------------------------------------------
+  # The stream_while plumbing
+  # ---------------------------------------------------------------------
+
+  # Every reduce flavor runs through here: one `Finch.stream_while/5`
+  # carrying an explicit state map. On an ok status, `:data` parts feed
+  # the flavor's `on_data`; on an error status they accumulate (capped)
+  # for the final `%Akaw.Error{}`. The `halted` flag records a user
+  # `:halt` so the lines flavor knows not to flush its tail.
+  defp run_stream(client, method, path, opts, init_flavor, on_data) do
+    opts = Keyword.put(opts, :compressed, false)
+    {finch_request, pool, finch_opts, _retry} = Request.prepared(client, method, path, opts)
+
+    initial_state = %{
+      status: nil,
+      flavor: init_flavor,
+      halted: false,
+      error_body: [],
+      error_size: 0
+    }
+
+    stream_fun = fn
+      # A 1xx interim status is followed by the real one — keeping the
+      # latest means data (which only ever follows the final status)
+      # gates on the right value.
+      {:status, status}, state -> {:cont, %{state | status: status}}
+      {:headers, _headers}, state -> {:cont, state}
+      {:data, chunk}, state -> handle_data(chunk, state, on_data)
+      # Trailers are part of Finch's stream contract even though CouchDB
+      # never sends them — an intermediary can. Without this clause a
+      # trailer-bearing response was a FunctionClauseError on a
+      # checked-out connection instead of a completed stream.
+      {:trailers, _trailers}, state -> {:cont, state}
+    end
+
+    case run_finch_stream(finch_request, pool, initial_state, stream_fun, finch_opts) do
+      {:ok, %{status: status} = state} when status in 200..299 ->
+        {:ok, state}
+
+      {:ok, state} ->
+        {:error, error_from_state(state)}
+
+      {:error, %RuntimeError{} = exception, _state} ->
+        # The rescued checkout-exhaustion raise (see run_finch_stream/5):
+        # the pool is saturated, not the network — same tag as the plain
+        # path so operators see one signal for one condition.
+        {:error,
+         %Error{
+           status: nil,
+           error: "pool_timeout",
+           reason: Exception.message(exception),
+           body: %{exception: exception}
+         }}
+
+      {:error, exception, _state} ->
+        {:error, stream_transport_error(exception)}
     end
   end
 
-  defp run_request(client, method, path, opts, collector) do
-    opts =
-      opts
-      |> Keyword.put(:into, collector)
-      |> pin_retry_off()
+  # Finch reports checkout exhaustion by raising; the reduce API
+  # promises {:ok, acc} | {:error, %Akaw.Error{}}, so that raise is
+  # rescued into the error channel. The message guard is load-bearing,
+  # not cosmetic: the user's reducer runs INSIDE stream_while, and a
+  # reducer's `raise "boom"` is a RuntimeError too — type alone would
+  # misclassify user bugs as pool saturation. Everything that isn't the
+  # exhaustion raise propagates untouched. (The message match is pinned
+  # by a saturation test against real Finch, so a Finch wording change
+  # fails loudly there rather than silently here.)
+  defp run_finch_stream(finch_request, pool, initial_state, stream_fun, finch_opts) do
+    Finch.stream_while(finch_request, pool, initial_state, stream_fun, finch_opts)
+  rescue
+    exception in RuntimeError ->
+      if Akaw.Request.pool_exhaustion?(exception) do
+        {:error, exception, initial_state}
+      else
+        reraise(exception, __STACKTRACE__)
+      end
+  end
 
-    case Request.request_raw(client, method, path, opts) do
-      {:ok, %Req.Response{} = resp} -> {:ok, resp}
-      {:error, exception} -> {:error, stream_transport_error(exception)}
+  defp handle_data(chunk, %{status: status} = state, on_data) when status in 200..299 do
+    case on_data.(chunk, state.flavor) do
+      {:cont, flavor} -> {:cont, %{state | flavor: flavor}}
+      {:halt, flavor} -> {:halt, %{state | flavor: flavor, halted: true}}
     end
   end
 
-  # See "Retry: off, unconditionally" in the module comment. Per-call
-  # opts merge after the client's req_options in Request.build/4, so
-  # this unconditional put also overrides a client-level
-  # req_options[:retry] — deliberately: the person who configured the
-  # client is not necessarily the person streaming through it.
-  defp pin_retry_off(opts), do: Keyword.put(opts, :retry, false)
+  defp handle_data(chunk, state, _on_data), do: append_error_chunk(state, chunk)
 
-  defp check_status(%Req.Response{status: status}) when status in 200..299, do: :ok
-
-  defp check_status(%Req.Response{status: status} = resp) do
-    body =
-      resp
-      |> Req.Response.get_private(:akaw_error_body, "")
-      |> IO.iodata_to_binary()
-
+  defp error_from_state(%{status: status} = state) do
     decoded =
-      case body do
+      case IO.iodata_to_binary(state.error_body) do
         "" -> %{}
         bin -> safe_decode(bin)
       end
 
-    {:error,
-     %Error{
-       status: status,
-       error: get_in(decoded, ["error"]),
-       reason: get_in(decoded, ["reason"]),
-       body: decoded
-     }}
+    %Error{
+      status: status,
+      error: get_in(decoded, ["error"]),
+      reason: get_in(decoded, ["reason"]),
+      body: decoded
+    }
   end
 
-  defp ok_status?(status), do: is_integer(status) and status in 200..299
-
-  # Error responses get buffered into `resp.private` so we can decode
-  # the JSON `{error, reason}` after the request completes. Capped so a
-  # misbehaving server returning a multi-megabyte HTML error page can't
-  # grow our heap: once we hit the cap the collector returns `:halt`,
-  # which closes the connection without consuming the rest of the body.
-  @max_error_body 64 * 1024
-
-  defp handle_error_chunk(resp, chunk, req) do
-    case append_error_chunk(resp, chunk) do
-      {:cont, new_resp} -> {:cont, {req, new_resp}}
-      {:halt, new_resp} -> {:halt, {req, new_resp}}
-    end
-  end
-
-  defp append_error_chunk(resp, chunk) do
-    size_so_far = Req.Response.get_private(resp, :akaw_error_body_size, 0)
-    remaining = @max_error_body - size_so_far
+  # Error responses get buffered so we can decode the JSON
+  # `{error, reason}` after the request completes. Capped at
+  # @max_error_body: once we hit the cap the stream halts, which closes
+  # the connection without consuming the rest of the body.
+  defp append_error_chunk(state, chunk) do
+    remaining = @max_error_body - state.error_size
 
     cond do
       remaining <= 0 ->
-        {:halt, resp}
+        {:halt, state}
 
       byte_size(chunk) <= remaining ->
-        {:cont, store_error_chunk(resp, chunk, size_so_far + byte_size(chunk))}
+        {:cont,
+         %{
+           state
+           | error_body: [state.error_body | chunk],
+             error_size: state.error_size + byte_size(chunk)
+         }}
 
       true ->
         truncated = binary_part(chunk, 0, remaining)
-        {:halt, store_error_chunk(resp, truncated, @max_error_body)}
+
+        {:halt,
+         %{state | error_body: [state.error_body | truncated], error_size: @max_error_body}}
     end
   end
 
-  defp store_error_chunk(resp, chunk, size) do
-    resp
-    |> Req.Response.update_private(:akaw_error_body, [chunk], &[&1, chunk])
-    |> Req.Response.put_private(:akaw_error_body_size, size)
+  defp validate_step({:cont, _acc} = step), do: step
+  defp validate_step({:halt, _acc} = step), do: step
+
+  defp validate_step(other) do
+    raise ArgumentError,
+          "reducer must return {:cont, acc} or {:halt, acc}, got: #{inspect(other)}"
   end
 
   defp split_lines(buffer) do
@@ -700,48 +773,27 @@ defmodule Akaw.Streaming do
   defp feed_lines([], acc, _reducer), do: {:cont, acc}
 
   defp feed_lines([line | rest], acc, reducer) do
-    case reducer.(line, acc) do
-      {:cont, new_acc} ->
-        feed_lines(rest, new_acc, reducer)
-
-      {:halt, new_acc} ->
-        {:halt, new_acc}
-
-      other ->
-        raise ArgumentError,
-              "reducer must return {:cont, acc} or {:halt, acc}, got: #{inspect(other)}"
+    case validate_step(reducer.(line, acc)) do
+      {:cont, new_acc} -> feed_lines(rest, new_acc, reducer)
+      {:halt, new_acc} -> {:halt, new_acc}
     end
   end
 
   defp feed_items([], acc, _reducer), do: {:cont, acc}
 
   defp feed_items([item | rest], acc, reducer) do
-    case reducer.(item, acc) do
-      {:cont, new_acc} ->
-        feed_items(rest, new_acc, reducer)
-
-      {:halt, new_acc} ->
-        {:halt, new_acc}
-
-      other ->
-        raise ArgumentError,
-              "reducer must return {:cont, acc} or {:halt, acc}, got: #{inspect(other)}"
+    case validate_step(reducer.(item, acc)) do
+      {:cont, new_acc} -> feed_items(rest, new_acc, reducer)
+      {:halt, new_acc} -> {:halt, new_acc}
     end
   end
 
   defp flush_tail_line("", acc, _reducer), do: acc
 
   defp flush_tail_line(tail, acc, reducer) do
-    case reducer.(tail, acc) do
-      {:cont, new_acc} ->
-        new_acc
-
-      {:halt, new_acc} ->
-        new_acc
-
-      other ->
-        raise ArgumentError,
-              "reducer must return {:cont, acc} or {:halt, acc}, got: #{inspect(other)}"
+    case validate_step(reducer.(tail, acc)) do
+      {:cont, new_acc} -> new_acc
+      {:halt, new_acc} -> new_acc
     end
   end
 end

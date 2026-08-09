@@ -15,8 +15,10 @@ defmodule Akaw.DesignDoc.Shows do
   ## Response type
 
   The result type depends entirely on what the show function returns:
-  Req auto-decodes responses with a JSON content-type into maps, and
-  leaves everything else as a binary. Either lands in `{:ok, body}`.
+  akaw decodes bodies the response declares as exactly
+  `application/json` into maps (structured suffixes like `+json` come
+  back raw), and leaves everything else as a binary. Either lands in
+  `{:ok, body}`.
 
   See <https://docs.couchdb.org/en/latest/api/ddoc/render.html#db-design-design-doc-show-show-name>.
   """
@@ -31,8 +33,9 @@ defmodule Akaw.DesignDoc.Shows do
     * `:doc_id` — invoke the show against a specific document
       (`_show/{func}/{docid}`) rather than `_show/{func}`
     * `:method` — `:get` (default) or `:post`
-    * `:body` — request body (only meaningful for `:post`; passing one with
-      `method: :get` raises `ArgumentError`)
+    * `:body` — request body (only meaningful for `:post`; a body on
+      `:get` is sent verbatim — CouchDB accepts it, but show functions
+      won't read it)
     * `:params` — query-string parameters forwarded verbatim
   """
   @spec call(Client.t(), String.t(), String.t(), String.t(), keyword()) ::

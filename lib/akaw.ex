@@ -2,11 +2,11 @@ defmodule Akaw do
   @moduledoc """
   Akaw — an Elixir client for [CouchDB](https://couchdb.apache.org/).
 
-  Akaw is a thin wrapper around the CouchDB HTTP API built on
-  [Req](https://hex.pm/packages/req) (which uses
-  [Finch](https://hex.pm/packages/finch) underneath). Endpoints are exposed as
-  plain functions that return `{:ok, decoded_map}` on success or
-  `{:error, term}` on failure.
+  Akaw is a thin wrapper around the CouchDB HTTP API, speaking directly
+  through [Finch](https://hex.pm/packages/finch) with the OTP-native
+  `JSON` module — between your call and the socket sit exactly one HTTP
+  client and one parser. Endpoints are exposed as plain functions that
+  return `{:ok, decoded_map}` on success or `{:error, term}` on failure.
 
   ## Quick start
 
@@ -52,25 +52,42 @@ defmodule Akaw do
 
   ## Connection pooling
 
-  Each `Akaw.Client` can target a specific Finch pool. By default Req uses
-  its built-in pool. To use a custom pool — for example to raise `:size` or
-  `:count` for high-concurrency workloads — start a Finch instance in your
+  Akaw is an OTP application: it boots one Finch instance named
+  `Akaw.Finch` (one HTTP/1 pool of 50 connections per CouchDB host),
+  and every client uses it unless told otherwise. To use a custom pool
+  — bigger sizes for high-concurrency workloads, TLS options for a
+  self-signed CouchDB, a proxy — start your own Finch in your
   supervision tree and pass its name:
 
       children = [
-        {Finch, name: MyApp.Finch, pools: %{default: [size: 50]}}
+        {Finch, name: MyApp.Finch, pools: %{default: [size: 200]}}
       ]
 
       client = Akaw.new(base_url: "http://localhost:5984", finch: MyApp.Finch)
+
+  Name your pool anything but `Akaw.Finch` — akaw's application starts
+  first as a dependency, so a consumer-supervised copy of that name
+  fails at boot with `:already_started`. And if a request raises
+  `ArgumentError: unknown registry: Akaw.Finch`, the `:akaw` application
+  isn't running (a script, `mix run --no-start`, `runtime: false`) —
+  start it, or pass your own pool.
+
+  When the pool saturates — every connection busy and `:pool_timeout`
+  (default 5s) exhausted — plain requests and the `reduce_while` family
+  return `{:error, %Akaw.Error{error: "pool_timeout"}}`. The lazy
+  streams can't: the failure happens in the transport's linked helper
+  process and arrives as an exit (or, for a process trapping exits, an
+  `:EXIT` message followed by the stream's own idle timeout). Watch
+  `[:finch, :queue, :exception]` telemetry to see saturation coming.
 
   ## Notes & gotchas
 
     * **JSON with duplicate keys.** CouchDB happily stores documents with
       repeated keys (the JSON spec allows it). Decoding collapses
-      duplicates to the **first**-seen value — verified against both the
-      OTP-native `JSON` module and Jason, which agree. If you need to
-      preserve duplicates you'll need a custom decoder; this isn't
-      supported today.
+      duplicates to the **first**-seen value (verified empirically
+      against the OTP-native `JSON` module). If you need to preserve
+      duplicates you'll need a custom decoder; this isn't supported
+      today.
 
     * **Streaming.** Large responses — `_changes` with `feed=continuous`,
       `_all_docs` over giant databases, full views, large Mango finds,
@@ -98,12 +115,15 @@ defmodule Akaw do
         * `Akaw.Partition.reduce_while_all_docs/6`,
           `reduce_while_view/8`, `reduce_while_find/7`
 
-      The lazy variants drain the calling process's mailbox via Req's
-      `into: :self`; run them from a `Task` you own. The callback
-      variants run the reducer inline inside `Finch.stream_while`, so
-      no messages reach the caller and blocking in the reducer stalls
-      CouchDB at the socket. Reading any of these with the non-streaming
-      variant loads the entire response into memory.
+      The lazy variants deliver response parts as messages into the
+      calling process's mailbox with no backpressure (consumed with a
+      selective `receive` — unrelated messages are left alone); prefer
+      a `Task` or the callback variants for anything long-lived. The
+      callback variants run the reducer inline inside
+      `Finch.stream_while`, so no messages are involved and blocking in
+      the reducer stalls CouchDB at the socket. Reading any of these
+      with the non-streaming variant loads the entire response into
+      memory.
 
       *Callback contract.* Every `reduce_while*` function takes
       `(acc, reducer, opts)`. The reducer is `(item, acc) -> {:cont, acc}
@@ -119,7 +139,7 @@ defmodule Akaw do
 
       Connection-level options (TLS for self-signed CouchDB, proxies)
       are configured on a named Finch pool, not per call — see
-      "Connection pooling" below.
+      "Connection pooling" above.
 
       Streaming and feed requests never retry — a per-call `retry:`
       raises `ArgumentError`, and a client-level
@@ -144,7 +164,9 @@ defmodule Akaw do
       `status: nil` and stash the underlying Mint/Finch exception in
       `body.exception` for the curious — tagged `"transport_error"` on
       plain requests and `"stream_transport_error"` on the streaming
-      APIs. See `Akaw.Error` for the full inventory of shapes.
+      APIs; a saturated connection pool is `"pool_timeout"` (see
+      "Connection pooling" for the one exception, the lazy streams).
+      See `Akaw.Error` for the full inventory of shapes.
   """
 
   alias Akaw.Client
@@ -170,18 +192,18 @@ defmodule Akaw do
         * `{:bearer, token}` — bearer token (JWT)
 
     * `:finch` — name of a custom Finch pool, e.g. `MyApp.Finch`, or a
-      keyword list of Finch options, e.g. `[name: MyApp.Finch, pool_tag: :bulk]`.
-      Defaults to Req's built-in pool. akaw translates the plain-atom form
-      into Req 0.7's `finch: [name: …]` spelling internally, so it stays
-      warning-free.
+      keyword list, e.g. `[name: MyApp.Finch, pool_tag: :bulk]`.
+      Defaults to `Akaw.Finch`, the pool the Akaw application boots —
+      see "Connection pooling".
 
     * `:headers` — list of `{name, value}` headers added to every request.
 
     * `:req_options` — a *narrow, named* set of client-level options merged
       into every request; per-call options override these. Allowed keys:
       `:receive_timeout`, `:pool_timeout`, `:retry` (atoms only —
-      `false`, `:safe_transient`, or `:transient`; plain requests only,
-      streaming and feed paths never retry), `:retry_delay`,
+      `false` disables the keep-alive-race retry; `:safe_transient` /
+      `:transient` both mean the default policy; plain requests only,
+      streaming and feed paths never retry),
       `:compressed`, and `:headers`. Anything
       else raises `ArgumentError` — this is deliberately not an
       arbitrary passthrough to the underlying HTTP client, so the
@@ -227,11 +249,71 @@ defmodule Akaw do
 
     %Client{
       base_url: base_url,
-      auth: Keyword.get(opts, :auth) || url_auth,
-      finch: Keyword.get(opts, :finch),
+      auth: validate_auth!(Keyword.get(opts, :auth) || url_auth),
+      finch: opts |> Keyword.get(:finch) |> validate_finch!(),
       headers: Keyword.get(opts, :headers, []),
       req_options: opts |> Keyword.get(:req_options, []) |> validate_req_options!()
     }
+  end
+
+  # The keyword form takes exactly the keys the request layer forwards.
+  # Silently dropping the rest would let `finch: [name: X, pool_size:
+  # 100]` run on default sizing until saturation teaches the user
+  # otherwise — the failure arrives days later, pointing nowhere.
+  defp validate_finch!(nil), do: nil
+  defp validate_finch!(name) when is_atom(name), do: name
+
+  defp validate_finch!(options) when is_list(options) do
+    case Keyword.keys(options) -- [:name, :pool_tag] do
+      [] ->
+        options
+
+      unknown ->
+        raise ArgumentError, """
+        unknown key(s) in :finch: #{inspect(Enum.uniq(unknown))}
+
+        The keyword form takes exactly :name and :pool_tag. Pool sizing, \
+        TLS, and proxy settings are configured on the named Finch pool \
+        itself:
+
+            {Finch, name: MyApp.CouchPool, pools: %{default: [size: 100]}}
+
+            Akaw.new(base_url: url, finch: MyApp.CouchPool)
+        """
+    end
+  end
+
+  defp validate_finch!(other) do
+    raise ArgumentError,
+          ":finch takes a pool name (atom) or a keyword list " <>
+            "[name: ..., pool_tag: ...] — got #{inspect(other)}"
+  end
+
+  # A control character in a credential (the classic: a trailing newline
+  # from an env var or file read) must fail HERE, loudly and redacted.
+  # Let through, a bearer token would be rejected by the transport's
+  # header validation — whose diagnostic echoes the full header value
+  # into the error struct and from there into logs — and a basic
+  # credential would just encode to garbage and 401 forever, silently.
+  defp validate_auth!({:basic, user, pass} = auth) when is_binary(user) and is_binary(pass) do
+    reject_control_characters!(user, "basic-auth username")
+    reject_control_characters!(pass, "basic-auth password")
+    auth
+  end
+
+  defp validate_auth!({:bearer, token} = auth) when is_binary(token) do
+    reject_control_characters!(token, "bearer token")
+    auth
+  end
+
+  defp validate_auth!(other), do: other
+
+  defp reject_control_characters!(value, label) do
+    if value =~ ~r/[\x00-\x1F\x7F]/ do
+      raise ArgumentError,
+            "the #{label} contains control characters (a trailing newline from " <>
+              "an env var or file read?) — value not shown. Trim it before Akaw.new/1."
+    end
   end
 
   # The named allowlist for client-level request options. Deliberately
@@ -242,7 +324,6 @@ defmodule Akaw do
     :receive_timeout,
     :pool_timeout,
     :retry,
-    :retry_delay,
     :compressed,
     :headers
   ]
@@ -281,21 +362,11 @@ defmodule Akaw do
     end
   end
 
-  # Credentials embedded in the URL (`http://admin:pw@host:5984`) used to be
-  # inert — Req 0.5 dropped them and CouchDB answered 401. Req 0.7 honours
-  # them as Basic auth, which quietly turns `:base_url` into a secret. That
-  # collides with `Akaw.Client`'s Inspect derivation, which deliberately
-  # shows `:base_url` in the clear and redacts `:auth`.
-  #
-  # So Akaw lifts the credential out of the URL and into `:auth` at
-  # construction time: the secret lands in the redacted field, inspect
-  # output stops leaking it, and the behaviour is the same whichever Req
-  # version is underneath. An explicit `:auth` option still wins, matching
-  # Req's own precedence.
-  # The :retry KEY is allowed; its value domain is contract too. Req
-  # also accepts a 2-arity function called with %Req.Request{} and
-  # %Req.Response{} — which would program the caller directly against
-  # the transport types this contract exists to contain. Atoms only.
+  # The :retry KEY is allowed; its value domain is contract too. Atoms
+  # only: a function-valued policy would program the caller directly
+  # against the transport's request/response types — the exact coupling
+  # this contract exists to contain (and the Req-era transport actually
+  # accepted one).
   defp validate_retry_value!(value) when value in [nil, false, :safe_transient, :transient] do
     :ok
   end
@@ -308,6 +379,15 @@ defmodule Akaw do
             "which the client contract deliberately does not expose."
   end
 
+  # Credentials embedded in the URL (`http://admin:pw@host:5984`) are
+  # lifted into `:auth` at construction time, for two load-bearing
+  # reasons. First, Finch silently discards URL userinfo — without the
+  # lift the credential would simply never reach CouchDB (the Req-era
+  # transports flip-flopped on this; now it's akaw's own guarantee).
+  # Second, a credential inside `:base_url` collides with
+  # `Akaw.Client`'s Inspect derivation, which deliberately prints
+  # `:base_url` in the clear and redacts `:auth` — the lift lands the
+  # secret in the redacted field. An explicit `:auth` option still wins.
   defp split_userinfo(base_url) do
     case URI.parse(base_url) do
       %URI{userinfo: nil} ->

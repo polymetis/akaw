@@ -145,16 +145,16 @@ defmodule Akaw.Changes do
     * a corrupt feed line — `error: "stream_decode_error"` with the
       offending line excerpted in `:reason`
 
-  > #### Backpressure & mailbox ownership {: .warning}
+  > #### Backpressure & mailbox growth {: .warning}
   >
-  > `stream/3` uses Req's `into: :self` mode under the hood, which means
-  > chunks arrive in the calling process's mailbox and a `receive` loop
-  > drains them. Two consequences:
+  > `stream/3` rides `Finch.async_request/3` under the hood: response
+  > parts arrive as messages in the calling process's mailbox and are
+  > consumed with a selective `receive` (unrelated messages are left
+  > alone). One consequence remains:
   >
-  >   * **Slow consumers buffer.** CouchDB pushes as fast as it can; if
-  >     you can't keep up, messages pile up in your mailbox.
-  >   * **Not safe from a GenServer / LiveView.** The `receive` swallows
-  >     *any* message, not just Finch ones. Run it from a `Task` or use
+  >   * **Slow consumers buffer.** CouchDB pushes as fast as it can with
+  >     no backpressure; if you can't keep up, parts pile up in your
+  >     mailbox. Run it from a `Task` or use
   >     `reduce_while/5` — the synchronous callback variant — which
   >     runs the reducer inline (real TCP backpressure, no mailbox
   >     involvement).
@@ -208,7 +208,7 @@ defmodule Akaw.Changes do
 
   `opts` is a flat keyword of CouchDB query params; you can also drop
   `:receive_timeout` / `:pool_timeout` in there
-  and they'll be routed to the transport (Finch/Mint, via Req) instead
+  and they'll be routed to the transport (Finch/Mint) instead
   of becoming query params.
 
   Continuous feeds can sit silent for long stretches. `:receive_timeout`

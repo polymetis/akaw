@@ -39,21 +39,19 @@ defmodule Akaw.MixProject do
 
   def application do
     [
-      extra_applications: [:logger]
+      extra_applications: [:logger],
+      mod: {Akaw.Application, []}
     ]
   end
 
   defp deps do
     [
-      # 0.7 is a hard floor, not a preference: Akaw.Request translates
-      # `:finch` / `:pool_timeout` into Req 0.7's `finch: [name: …]`
-      # spelling, which raises on 0.5.
-      {:req, "~> 0.7"},
-      # Both already ride in transitively (jason via req, telemetry via
-      # req -> finch), but akaw's own code names their modules —
-      # Jason.DecodeError in Akaw.Request, :telemetry.execute in
-      # Akaw.SessionServer — and code that names a module declares it.
-      {:jason, "~> 1.4"},
+      {:finch, "~> 0.23"},
+      # Rides in transitively via finch, but akaw's own code names
+      # Mint.TransportError (the retry policy matches on it) — and code
+      # that names a module declares it. Same rule for telemetry
+      # (:telemetry.execute in Akaw.SessionServer).
+      {:mint, "~> 1.9"},
       {:telemetry, "~> 1.0"},
       {:plug, "~> 1.0", only: :test},
       # The unit suite's test seam: every stub plug is served by a real
