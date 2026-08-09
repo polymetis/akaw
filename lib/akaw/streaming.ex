@@ -99,6 +99,12 @@ defmodule Akaw.Streaming do
   @drain_timeout 5_000
   @default_idle_timeout to_timeout(minute: 5)
 
+  # Error-body ceiling, shared by both flavors of non-2xx buffering (the
+  # reduce path's collector and the async open drain): a misbehaving
+  # server returning a multi-megabyte HTML error page can't grow our
+  # heap — we keep the first 64 KiB and close.
+  @max_error_body 64 * 1024
+
   @doc """
   Lazy stream of raw binary chunks from the HTTP response body.
 
@@ -129,14 +135,21 @@ defmodule Akaw.Streaming do
 
   # The response status is the first part to arrive; a held-open feed's
   # can legitimately be slow, so the wait runs on the same idle clock as
-  # the body.
+  # the body. A 1xx is informational — the real status follows on the
+  # same ref, so keep waiting (its headers fall through the same way).
   defp await_open(%{ref: ref} = state) do
     receive do
+      {^ref, {:status, status}} when status in 100..199 ->
+        await_open(state)
+
       {^ref, {:status, status}} when status in 200..299 ->
         state
 
       {^ref, {:status, status}} ->
         raise open_error(ref, status)
+
+      {^ref, {:headers, _headers}} ->
+        await_open(state)
 
       {^ref, {:error, exception}} ->
         raise stream_transport_error(exception)
@@ -154,9 +167,12 @@ defmodule Akaw.Streaming do
       {^ref, {:data, chunk}} ->
         {[chunk], state}
 
-      # Response headers, and possibly trailers after the body — neither
-      # is part of the chunk stream.
+      # Response headers before the body, trailers after it (the async
+      # path tags them distinctly) — neither is part of the chunk stream.
       {^ref, {:headers, _headers}} ->
+        next_chunk(state)
+
+      {^ref, {:trailers, _trailers}} ->
         next_chunk(state)
 
       {^ref, :done} ->
@@ -200,7 +216,7 @@ defmodule Akaw.Streaming do
   end
 
   defp open_error(ref, status) do
-    body = drain(ref, [])
+    body = drain(ref, [], 0, System.monotonic_time(:millisecond) + @drain_timeout)
     cancel_and_flush(ref)
 
     decoded =
@@ -217,14 +233,26 @@ defmodule Akaw.Streaming do
     }
   end
 
-  defp drain(ref, acc) do
-    receive do
-      {^ref, {:data, chunk}} -> drain(ref, [acc | chunk])
-      {^ref, {:headers, _headers}} -> drain(ref, acc)
-      {^ref, :done} -> acc
-      {^ref, {:error, _exception}} -> acc
-    after
-      @drain_timeout -> acc
+  # Bounded twice, like the reduce path's error buffering: at most
+  # @max_error_body bytes (a misbehaving server returning a
+  # multi-megabyte HTML error page can't grow our heap), and at most
+  # @drain_timeout total — a hard deadline, not a per-message window a
+  # dripping server could reset forever.
+  defp drain(ref, acc, size, deadline) do
+    remaining_time = deadline - System.monotonic_time(:millisecond)
+
+    if remaining_time <= 0 or size >= @max_error_body do
+      acc
+    else
+      receive do
+        {^ref, {:data, chunk}} -> drain(ref, [acc | chunk], size + byte_size(chunk), deadline)
+        {^ref, {:headers, _headers}} -> drain(ref, acc, size, deadline)
+        {^ref, {:trailers, _trailers}} -> drain(ref, acc, size, deadline)
+        {^ref, :done} -> acc
+        {^ref, {:error, _exception}} -> acc
+      after
+        remaining_time -> acc
+      end
     end
   end
 
@@ -593,9 +621,17 @@ defmodule Akaw.Streaming do
     }
 
     stream_fun = fn
+      # A 1xx interim status is followed by the real one — keeping the
+      # latest means data (which only ever follows the final status)
+      # gates on the right value.
       {:status, status}, state -> {:cont, %{state | status: status}}
       {:headers, _headers}, state -> {:cont, state}
       {:data, chunk}, state -> handle_data(chunk, state, on_data)
+      # Trailers are part of Finch's stream contract even though CouchDB
+      # never sends them — an intermediary can. Without this clause a
+      # trailer-bearing response was a FunctionClauseError on a
+      # checked-out connection instead of a completed stream.
+      {:trailers, _trailers}, state -> {:cont, state}
     end
 
     case Finch.stream_while(finch_request, pool, initial_state, stream_fun, finch_opts) do
@@ -635,12 +671,9 @@ defmodule Akaw.Streaming do
   end
 
   # Error responses get buffered so we can decode the JSON
-  # `{error, reason}` after the request completes. Capped so a
-  # misbehaving server returning a multi-megabyte HTML error page can't
-  # grow our heap: once we hit the cap the stream halts, which closes
+  # `{error, reason}` after the request completes. Capped at
+  # @max_error_body: once we hit the cap the stream halts, which closes
   # the connection without consuming the rest of the body.
-  @max_error_body 64 * 1024
-
   defp append_error_chunk(state, chunk) do
     remaining = @max_error_body - state.error_size
 
