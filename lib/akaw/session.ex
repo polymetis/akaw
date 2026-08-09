@@ -74,7 +74,17 @@ defmodule Akaw.Session do
           {:ok, Client.t(), map()} | {:error, term()}
   def create(%Client{} = client, name, password)
       when is_binary(name) and is_binary(password) do
-    request_client = %Client{client | auth: nil}
+    # Neutralize BOTH spellings of an existing credential before posting
+    # the new one: :auth, and a literal authorization header a client
+    # may carry — symmetric with refresh/3's cookie strip.
+    request_client = %Client{
+      client
+      | auth: nil,
+        headers:
+          Enum.reject(client.headers, fn {header_name, _} ->
+            String.downcase(header_name) == "authorization"
+          end)
+    }
 
     case Request.request(request_client, :post, "/_session",
            json: %{name: name, password: password},

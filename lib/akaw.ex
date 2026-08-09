@@ -232,11 +232,38 @@ defmodule Akaw do
 
     %Client{
       base_url: base_url,
-      auth: Keyword.get(opts, :auth) || url_auth,
+      auth: validate_auth!(Keyword.get(opts, :auth) || url_auth),
       finch: Keyword.get(opts, :finch),
       headers: Keyword.get(opts, :headers, []),
       req_options: opts |> Keyword.get(:req_options, []) |> validate_req_options!()
     }
+  end
+
+  # A control character in a credential (the classic: a trailing newline
+  # from an env var or file read) must fail HERE, loudly and redacted.
+  # Let through, a bearer token would be rejected by the transport's
+  # header validation — whose diagnostic echoes the full header value
+  # into the error struct and from there into logs — and a basic
+  # credential would just encode to garbage and 401 forever, silently.
+  defp validate_auth!({:basic, user, pass} = auth) when is_binary(user) and is_binary(pass) do
+    reject_control_characters!(user, "basic-auth username")
+    reject_control_characters!(pass, "basic-auth password")
+    auth
+  end
+
+  defp validate_auth!({:bearer, token} = auth) when is_binary(token) do
+    reject_control_characters!(token, "bearer token")
+    auth
+  end
+
+  defp validate_auth!(other), do: other
+
+  defp reject_control_characters!(value, label) do
+    if value =~ ~r/[\x00-\x1F\x7F]/ do
+      raise ArgumentError,
+            "the #{label} contains control characters (a trailing newline from " <>
+              "an env var or file read?) — value not shown. Trim it before Akaw.new/1."
+    end
   end
 
   # The named allowlist for client-level request options. Deliberately

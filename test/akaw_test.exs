@@ -101,6 +101,40 @@ defmodule AkawTest do
     end
   end
 
+  describe "new/1 credential validation" do
+    test "a bearer token with a control character is rejected, redacted" do
+      # The trailing-newline-from-an-env-var classic. Let through, the
+      # transport's header validation would reject it with a diagnostic
+      # that echoes the FULL token into the error struct and logs.
+      error =
+        assert_raise ArgumentError, fn ->
+          Akaw.new(base_url: "http://x", auth: {:bearer, "eyJhbGciOi.secret.sig\n"})
+        end
+
+      assert error.message =~ "control characters"
+      assert error.message =~ "value not shown"
+      refute error.message =~ "secret"
+    end
+
+    test "basic-auth credentials with control characters are rejected too" do
+      # Basic auth can't leak (base64 swallows anything) — it just 401s
+      # forever, silently. A loud construction error beats that.
+      for auth <- [{:basic, "admin\r", "pw"}, {:basic, "admin", "pw\n"}] do
+        error = assert_raise(ArgumentError, fn -> Akaw.new(base_url: "http://x", auth: auth) end)
+        refute error.message =~ "pw"
+      end
+    end
+
+    test "a malformed percent-escape in URL userinfo stays literal — no crash, no echo" do
+      # URI.decode/1 is lenient on malformed escapes (they pass through
+      # unchanged), so there is no raise to redact — the credential
+      # simply carries the literal bytes into the redacted :auth field.
+      client = Akaw.new(base_url: "http://admin:p%ss@localhost:5984")
+      assert client.auth == {:basic, "admin", "p%ss"}
+      refute inspect(client) =~ "p%ss"
+    end
+  end
+
   describe "new/1 req_options validation" do
     test "req_options rejects unknown keys with the named allowlist" do
       error =
